@@ -1,0 +1,72 @@
+# Local infrastructure. Ports are offset from the defaults (5432/6379) so
+# this can run next to other projects' Postgres/Redis containers.
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: incidents
+      POSTGRES_USER: incidents
+      POSTGRES_PASSWORD: incidents
+    ports:
+      - "5435:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U incidents"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+  # --- Full stack in containers: `docker compose --profile app up --build` ---
+  # (For development, run only postgres + redis and start the apps with npm.)
+  migrate:
+    profiles: ["app"]
+    build: { context: ., dockerfile: docker/Dockerfile, target: api }
+    command: ["sh", "-c", "npm run migrate -w @irp/database && npm run seed -w @irp/database -- --if-empty"]
+    environment: &app-env
+      DATABASE_URL: postgres://incidents:incidents@postgres:5432/incidents
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: ${JWT_SECRET:-docker-demo-secret-change-me}
+      WEB_ORIGIN: http://localhost:3000
+      NOTIFY_WEBHOOK_URL: ${NOTIFY_WEBHOOK_URL:-}
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  api:
+    profiles: ["app"]
+    build: { context: ., dockerfile: docker/Dockerfile, target: api }
+    environment: *app-env
+    ports:
+      - "4000:4000"
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  worker:
+    profiles: ["app"]
+    build: { context: ., dockerfile: docker/Dockerfile, target: worker }
+    environment: *app-env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  web:
+    profiles: ["app"]
+    build: { context: ., dockerfile: docker/Dockerfile, target: web }
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:

@@ -1,0 +1,23 @@
+{
+  "name": "@irp/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Domain types, validation schemas and pure business logic shared by the API, worker and web app.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./dedup": "./src/dedup.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^4.0.0"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "@irp/alert-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Tiny client for sending alerts to the Incident Response Platform, plus a scenario simulator.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "irp-simulate": "./src/simulate.ts"
+  },
+  "scripts": {
+    "simulate": "tsx src/simulate.ts",
+    "typecheck": "tsc -p .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@irp/shared": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vitest": "^4.0.0"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "incident-response-platform",
+  "private": true,
+  "description": "Incident management platform: alert ingestion, incident lifecycle, escalations, live updates and postmortems.",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev -w @irp/api",
+    "dev:worker": "npm run dev -w @irp/worker",
+    "dev:web": "npm run dev -w @irp/web",
+    "db:migrate": "npm run migrate -w @irp/database",
+    "db:seed": "npm run seed -w @irp/database",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "simulate": "npm run simulate -w @irp/alert-sdk"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
