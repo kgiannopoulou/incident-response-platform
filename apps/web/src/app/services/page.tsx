@@ -1,21 +1,15 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { Fragment, useState, type FormEvent } from "react";
+import { ApiKeysPanel, NewKeyBanner } from "@/components/api-keys-panel";
 import { Button, Card, ErrorState, inputClass, Loading, ServiceStatusPill } from "@/components/ui";
-import { API_URL, patch, post } from "@/lib/api";
+import { patch, post } from "@/lib/api";
 import { useUser } from "@/lib/auth";
 import { timeAgo } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
-import type { Service } from "@/lib/types";
+import type { NewApiKey, Service } from "@/lib/types";
 
 type Policy = { id: number; name: string; rules: { level: number; delayMinutes: number; target: string }[] };
-
-function curlExample(key: string) {
-  return `curl -X POST ${API_URL}/api/v1/alerts \\
-  -H "Authorization: Bearer ${key}" \\
-  -H "Content-Type: application/json" \\
-  -d '{"summary":"Checkout 5xx above 5%","severity":"critical","source":"prometheus"}'`;
-}
 
 export default function ServicesPage() {
   const user = useUser();
@@ -23,7 +17,8 @@ export default function ServicesPage() {
   const services = useApi<{ services: Service[] }>("/services", (e) => e.type === "service.updated" || e.type.startsWith("incident."));
   const policies = useApi<{ policies: Policy[] }>("/escalation-policies");
   const [error, setError] = useState<string | null>(null);
-  const [newKey, setNewKey] = useState<{ service: string; key: string } | null>(null);
+  const [created, setCreated] = useState<{ service: Service; apiKey: NewApiKey } | null>(null);
+  const [openKeys, setOpenKeys] = useState<number | null>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [policyId, setPolicyId] = useState("");
@@ -41,12 +36,12 @@ export default function ServicesPage() {
   async function handleCreate(e: FormEvent) {
     e.preventDefault();
     await run(async () => {
-      const res = await post<{ service: Service; integrationKey: string }>("/services", {
+      const res = await post<{ service: Service; apiKey: NewApiKey }>("/services", {
         name,
         description,
         escalationPolicyId: policyId ? Number(policyId) : null,
       });
-      setNewKey({ service: res.service.name, key: res.integrationKey });
+      setCreated(res);
       setName("");
       setDescription("");
     });
@@ -57,17 +52,7 @@ export default function ServicesPage() {
       <h1 className="text-2xl font-semibold">Services</h1>
       {error && <ErrorState message={error} />}
 
-      {newKey && (
-        <div className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm">
-          <p className="font-medium text-amber-200">
-            Integration key for {newKey.service} — copy it now, it won&apos;t be shown again.
-          </p>
-          <pre className="overflow-x-auto rounded bg-zinc-950 p-3 text-xs text-zinc-200">{curlExample(newKey.key)}</pre>
-          <Button variant="ghost" onClick={() => setNewKey(null)}>
-            Done
-          </Button>
-        </div>
-      )}
+      {created && <NewKeyBanner apiKey={created.apiKey} service={created.service} onDone={() => setCreated(null)} />}
 
       <Card>
         {services.error ? (
@@ -89,9 +74,12 @@ export default function ServicesPage() {
               </thead>
               <tbody className="divide-y divide-zinc-800">
                 {services.data!.services.map((s) => (
-                  <tr key={s.id}>
+                  <Fragment key={s.id}>
+                  <tr>
                     <td className="py-2 pr-3">
-                      <div className="font-medium text-zinc-100">{s.name}</div>
+                      <div className="font-medium text-zinc-100">
+                        {s.name} <code className="ml-1 text-xs font-normal text-zinc-500">{s.slug}</code>
+                      </div>
                       <div className="text-xs text-zinc-500">
                         {s.description}
                         {s.auto_resolve && " · auto-resolves"}
@@ -112,20 +100,20 @@ export default function ServicesPage() {
                         >
                           {s.status === "maintenance" ? "End maintenance" : "Maintenance"}
                         </Button>
-                        <Button
-                          variant="ghost"
-                          onClick={() =>
-                            run(async () => {
-                              const res = await post<{ integrationKey: string }>(`/services/${s.id}/rotate-key`);
-                              setNewKey({ service: s.name, key: res.integrationKey });
-                            })
-                          }
-                        >
-                          Rotate key
+                        <Button variant="ghost" onClick={() => setOpenKeys(openKeys === s.id ? null : s.id)}>
+                          API keys ({s.active_keys})
                         </Button>
                       </td>
                     )}
                   </tr>
+                  {isAdmin && openKeys === s.id && (
+                    <tr>
+                      <td colSpan={6} className="bg-zinc-950/60 px-3 py-4">
+                        <ApiKeysPanel service={s} onChange={services.reload} />
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

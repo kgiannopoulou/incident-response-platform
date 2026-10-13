@@ -2,11 +2,11 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { incidentRef } from "@irp/shared";
+import { AlertFeed } from "@/components/alert-feed";
 import { DeclareIncident } from "@/components/declare-incident";
 import { IncidentTable } from "@/components/incident-table";
-import { Button, Card, cx, Empty, ErrorState, Loading, ServiceStatusPill } from "@/components/ui";
-import { duration, timeAgo } from "@/lib/format";
+import { Button, Card, cx, ErrorState, Loading, ServiceStatusPill } from "@/components/ui";
+import { duration } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
 import type { AlertRow, IncidentSummary, Service } from "@/lib/types";
 
@@ -26,12 +26,6 @@ function Stat({ label, value, alert }: { label: string; value: string | number; 
     </div>
   );
 }
-
-const ALERT_STATUS_STYLE: Record<string, string> = {
-  firing: "text-red-300",
-  resolved: "text-emerald-400",
-  suppressed: "text-zinc-500",
-};
 
 export default function DashboardPage() {
   const [declaring, setDeclaring] = useState(false);
@@ -95,33 +89,13 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      <Card title="Alert feed">
+      <Card title="Alerts" actions={<Link href="/alerts" className="text-xs text-zinc-400 hover:underline">All alerts →</Link>}>
         {alerts.error ? (
           <ErrorState message={alerts.error} onRetry={alerts.reload} />
         ) : alerts.loading ? (
           <Loading />
-        ) : alerts.data!.alerts.length === 0 ? (
-          <Empty>No alerts received yet. Try <code>npm run simulate</code>.</Empty>
         ) : (
-          <ul className="divide-y divide-zinc-800 text-sm">
-            {alerts.data!.alerts.slice(0, 15).map((a) => (
-              <li key={a.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2">
-                <span className={cx("w-20 text-xs font-medium uppercase", ALERT_STATUS_STYLE[a.status])}>{a.status}</span>
-                <span className="w-16 text-xs uppercase text-zinc-500">{a.severity}</span>
-                <span className="min-w-0 flex-1 truncate text-zinc-200">{a.summary}</span>
-                <span className="text-xs text-zinc-500">
-                  {a.service_name} · {a.source}
-                  {a.matched_rule && ` · rule: ${a.matched_rule}`}
-                </span>
-                {a.incident_number && (
-                  <Link href={`/incidents/${a.incident_number}`} className="font-mono text-xs text-zinc-400 hover:underline">
-                    {incidentRef(a.incident_number)}
-                  </Link>
-                )}
-                <span className="w-16 text-right text-xs text-zinc-500">{timeAgo(a.received_at)}</span>
-              </li>
-            ))}
-          </ul>
+          <AlertFeed alerts={alerts.data!.alerts} limit={12} />
         )}
       </Card>
 

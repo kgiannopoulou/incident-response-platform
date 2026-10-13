@@ -14,8 +14,8 @@ import type { RuleCondition } from "./schemas";
 export type AlertForMatching = {
   severity: AlertSeverity;
   source: string;
-  summary: string;
-  component?: string | null;
+  title: string;
+  description?: string | null;
 };
 
 export type AlertRule = {
@@ -63,13 +63,13 @@ export function evaluateRules(alert: AlertForMatching, rules: AlertRule[]): Rule
     };
   }
 
-  // Default rule: page for critical and error alerts, only record the rest.
-  if (ALERT_SEVERITY_RANK[alert.severity] >= ALERT_SEVERITY_RANK.error) {
+  // Default rule: page for critical and high alerts, only record the rest.
+  if (ALERT_SEVERITY_RANK[alert.severity] >= ALERT_SEVERITY_RANK.high) {
     return {
       action: "create_incident",
       severity: SEVERITY_FROM_ALERT[alert.severity],
       ruleId: null,
-      reason: "Default rule: critical/error alerts open an incident",
+      reason: "Default rule: critical/high alerts open an incident",
     };
   }
   return {

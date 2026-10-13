@@ -1,28 +1,32 @@
-import { randomBytes } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
-import { alertRuleSchema, createServiceSchema, updateServiceSchema } from "@irp/shared";
-import { hashIntegrationKey } from "@irp/shared/dedup";
+import {
+  alertRuleSchema,
+  createApiKeySchema,
+  createServiceSchema,
+  rotateApiKeySchema,
+  slugify,
+  updateServiceSchema,
+} from "@irp/shared";
 import type { Deps } from "../deps";
 import { recomputeServiceStatus } from "../domain/incidents";
+import { createApiKey, keyState, listApiKeys, lockApiKey } from "../lib/api-keys";
 import { audit } from "../lib/audit";
 import { requireAdmin } from "../lib/auth";
 import { runTx } from "../lib/effects";
 import { HttpError, notFound, parseId } from "../lib/http";
-
-// Integration keys are shown exactly once (on create / rotate); only the
-// hash is stored, like a password.
-const newIntegrationKey = () => `irp_${randomBytes(24).toString("base64url")}`;
 
 export function servicesRouter(deps: Deps) {
   const router = Router();
 
   router.get("/", async (req, res) => {
     const { rows } = await deps.pool.query(
-      `SELECT s.id, s.name, s.description, s.status, s.auto_resolve, s.created_at,
+      `SELECT s.id, s.name, s.slug, s.description, s.status, s.auto_resolve, s.created_at,
               t.id AS team_id, t.name AS team_name, ep.id AS escalation_policy_id, ep.name AS escalation_policy_name,
               (SELECT count(*)::int FROM incidents i WHERE i.service_id = s.id AND i.status <> 'resolved') AS open_incidents,
-              (SELECT max(a.received_at) FROM alerts a WHERE a.service_id = s.id) AS last_alert_at
+              (SELECT max(a.received_at) FROM alerts a WHERE a.service_id = s.id) AS last_alert_at,
+              (SELECT count(*)::int FROM api_keys k WHERE k.service_id = s.id AND k.revoked_at IS NULL
+                 AND (k.expires_at IS NULL OR k.expires_at > now())) AS active_keys
        FROM services s
        LEFT JOIN teams t ON t.id = s.team_id
        LEFT JOIN escalation_policies ep ON ep.id = s.escalation_policy_id
@@ -33,11 +37,14 @@ export function servicesRouter(deps: Deps) {
     res.json({ services: rows });
   });
 
+  // Creates the service and its first API key. The key is in this response
+  // and nowhere else, ever.
   router.post("/", requireAdmin, async (req, res) => {
     const data = createServiceSchema.parse(req.body);
     const orgId = req.user!.organizationId;
-    const key = newIntegrationKey();
-    const service = await runTx(deps, async (db, fx) => {
+    const slug = data.slug ?? slugify(data.name);
+    if (!slug) throw new HttpError(400, "Could not derive a slug from that name; pass one explicitly");
+    const result = await runTx(deps, async (db, fx) => {
       // Team / policy must belong to the same organization.
       if (data.teamId) {
         const { rows } = await db.query(`SELECT 1 FROM teams WHERE id = $1 AND organization_id = $2`, [data.teamId, orgId]);
@@ -52,27 +59,33 @@ export function servicesRouter(deps: Deps) {
       }
       const { rows } = await db
         .query(
-          `INSERT INTO services (organization_id, team_id, escalation_policy_id, name, description,
-                                 integration_key_hash, auto_resolve)
-           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, name, description, status, auto_resolve`,
-          [orgId, data.teamId ?? null, data.escalationPolicyId ?? null, data.name, data.description, hashIntegrationKey(key), data.autoResolve]
+          `INSERT INTO services (organization_id, team_id, escalation_policy_id, name, slug, description, auto_resolve)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, name, slug, description, status, auto_resolve`,
+          [orgId, data.teamId ?? null, data.escalationPolicyId ?? null, data.name, slug, data.description, data.autoResolve]
         )
         .catch((err) => {
-          if (err.code === "23505") throw new HttpError(409, "A service with that name already exists");
+          if (err.code === "23505") throw new HttpError(409, "A service with that name or slug already exists");
           throw err;
         });
+      const { key, plaintext } = await createApiKey(db, {
+        organizationId: orgId,
+        serviceId: rows[0].id,
+        name: "Default",
+        rateLimitPerMinute: 120,
+        createdBy: req.user!.id,
+      });
       await audit(db, {
         organizationId: orgId,
         actorUserId: req.user!.id,
         action: "service.create",
         entityType: "service",
         entityId: rows[0].id,
-        details: { name: data.name },
+        details: { name: data.name, slug, apiKey: key.prefix },
       });
       fx.publish(orgId, { type: "service.updated", serviceId: rows[0].id });
-      return rows[0];
+      return { service: rows[0], apiKey: { ...key, state: keyState(key), key: plaintext } };
     });
-    res.status(201).json({ service, integrationKey: key });
+    res.status(201).json(result);
   });
 
   router.patch("/:id", requireAdmin, async (req, res) => {
@@ -117,24 +130,120 @@ export function servicesRouter(deps: Deps) {
     res.json({ service });
   });
 
-  router.post("/:id/rotate-key", requireAdmin, async (req, res) => {
-    const id = parseId(req.params.id, "Service");
-    const key = newIntegrationKey();
-    await runTx(deps, async (db) => {
-      const { rowCount } = await db.query(
-        `UPDATE services SET integration_key_hash = $3 WHERE id = $1 AND organization_id = $2`,
-        [id, req.user!.organizationId, hashIntegrationKey(key)]
-      );
-      if (!rowCount) throw notFound("Service");
+  // --- API keys ------------------------------------------------------------
+  // A service can have several keys: one per sender, or two at once while a
+  // rotation is in progress. Plaintext keys appear only in the create/rotate
+  // responses; listings show the non-secret prefix.
+
+  const serviceInOrg = async (
+    db: Pick<Deps["pool"], "query">,
+    serviceId: number,
+    orgId: number
+  ): Promise<{ id: number; slug: string }> => {
+    const { rows } = await db.query(`SELECT id, slug FROM services WHERE id = $1 AND organization_id = $2`, [
+      serviceId,
+      orgId,
+    ]);
+    if (!rows[0]) throw notFound("Service");
+    return rows[0];
+  };
+
+  router.get("/:id/keys", requireAdmin, async (req, res) => {
+    const service = await serviceInOrg(deps.pool, parseId(req.params.id, "Service"), req.user!.organizationId);
+    res.json({ keys: await listApiKeys(deps.pool, service.id) });
+  });
+
+  router.post("/:id/keys", requireAdmin, async (req, res) => {
+    const serviceId = parseId(req.params.id, "Service");
+    const data = createApiKeySchema.parse(req.body ?? {});
+    const created = await runTx(deps, async (db) => {
+      await serviceInOrg(db, serviceId, req.user!.organizationId);
+      const { key, plaintext } = await createApiKey(db, {
+        organizationId: req.user!.organizationId,
+        serviceId,
+        name: data.name,
+        rateLimitPerMinute: data.rateLimitPerMinute,
+        createdBy: req.user!.id,
+      });
       await audit(db, {
         organizationId: req.user!.organizationId,
         actorUserId: req.user!.id,
-        action: "service.rotate_key",
+        action: "api_key.create",
         entityType: "service",
-        entityId: id,
+        entityId: serviceId,
+        details: { keyId: key.id, prefix: key.prefix, name: data.name, rateLimitPerMinute: data.rateLimitPerMinute },
       });
+      return { ...key, state: keyState(key), key: plaintext };
     });
-    res.json({ integrationKey: key });
+    res.status(201).json({ apiKey: created });
+  });
+
+  // Rotation = issue a replacement and put the old key on a timer. Senders
+  // have `graceMinutes` to switch over, during which both keys work; after
+  // that the old one is rejected as expired. graceMinutes: 0 cuts it off now.
+  router.post("/:id/keys/:keyId/rotate", requireAdmin, async (req, res) => {
+    const serviceId = parseId(req.params.id, "Service");
+    const keyId = parseId(req.params.keyId, "API key");
+    const { graceMinutes } = rotateApiKeySchema.parse(req.body ?? {});
+    const result = await runTx(deps, async (db) => {
+      await serviceInOrg(db, serviceId, req.user!.organizationId);
+      const old = await lockApiKey(db, serviceId, keyId);
+      if (!old) throw notFound("API key");
+      const state = keyState(old);
+      if (state !== "active") {
+        throw new HttpError(409, `Only active keys can be rotated (this key is ${state})`);
+      }
+      const { key, plaintext } = await createApiKey(db, {
+        organizationId: req.user!.organizationId,
+        serviceId,
+        name: old.name,
+        rateLimitPerMinute: old.rate_limit_per_minute,
+        createdBy: req.user!.id,
+      });
+      const { rows } = await db.query(
+        `UPDATE api_keys SET expires_at = now() + make_interval(mins => $2), replaced_by_id = $3
+         WHERE id = $1 RETURNING expires_at`,
+        [keyId, graceMinutes, key.id]
+      );
+      await audit(db, {
+        organizationId: req.user!.organizationId,
+        actorUserId: req.user!.id,
+        action: "api_key.rotate",
+        entityType: "service",
+        entityId: serviceId,
+        details: { oldKeyId: keyId, oldPrefix: old.prefix, newKeyId: key.id, newPrefix: key.prefix, graceMinutes },
+      });
+      return { apiKey: { ...key, state: keyState(key), key: plaintext }, previousKeyExpiresAt: rows[0].expires_at };
+    });
+    res.status(201).json(result);
+  });
+
+  // Revocation is immediate and final: the next request with this key gets
+  // 401. Use it for leaked keys; use rotation for routine changes.
+  router.post("/:id/keys/:keyId/revoke", requireAdmin, async (req, res) => {
+    const serviceId = parseId(req.params.id, "Service");
+    const keyId = parseId(req.params.keyId, "API key");
+    const key = await runTx(deps, async (db) => {
+      await serviceInOrg(db, serviceId, req.user!.organizationId);
+      const existing = await lockApiKey(db, serviceId, keyId);
+      if (!existing) throw notFound("API key");
+      if (existing.revoked_at) throw new HttpError(409, "This API key is already revoked");
+      const { rows } = await db.query(
+        `UPDATE api_keys SET revoked_at = now(), revoked_by = $2 WHERE id = $1
+         RETURNING id, name, prefix, revoked_at`,
+        [keyId, req.user!.id]
+      );
+      await audit(db, {
+        organizationId: req.user!.organizationId,
+        actorUserId: req.user!.id,
+        action: "api_key.revoke",
+        entityType: "service",
+        entityId: serviceId,
+        details: { keyId, prefix: existing.prefix },
+      });
+      return { ...rows[0], state: "revoked" as const };
+    });
+    res.json({ apiKey: key });
   });
 
   router.get("/:id/rules", async (req, res) => {

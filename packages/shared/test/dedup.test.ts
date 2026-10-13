@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { computeDedupKey, normalizeSummary } from "../src/dedup";
+import { computeDedupKey, normalizeTitle } from "../src/dedup";
 
 describe("dedup keys", () => {
   it("masks numbers and whitespace so recurring alerts group together", () => {
-    expect(normalizeSummary("p99  latency 2300ms on node 4")).toBe("p# latency #ms on node #");
+    expect(normalizeTitle("p99  latency 2300ms on node 4")).toBe("p# latency #ms on node #");
     expect(computeDedupKey(1, "prom", "p99 latency 2300ms")).toBe(
       computeDedupKey(1, " PROM ", "P99 latency 2410ms")
     );

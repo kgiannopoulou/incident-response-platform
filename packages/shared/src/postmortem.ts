@@ -16,7 +16,7 @@ export type PostmortemInput = {
     acknowledgedAt: Date | null;
     resolvedAt: Date | null;
   };
-  alerts: { summary: string; severity: string; source: string; receivedAt: Date }[];
+  alerts: { title: string; severity: string; source: string; receivedAt: Date }[];
   timeline: { type: string; message: string; actorName: string | null; createdAt: Date }[];
   responders: { name: string; role: string }[];
 };
@@ -84,7 +84,7 @@ export function buildPostmortemDraft(input: PostmortemInput): PostmortemDraft {
     ". Describe the customer-facing impact here (affected users, failed requests, revenue).";
 
   const rootCause = firstAlert
-    ? `First signal: "${firstAlert.summary}" from ${firstAlert.source} at ${hhmm(firstAlert.receivedAt)}. ` +
+    ? `First signal: "${firstAlert.title}" from ${firstAlert.source} at ${hhmm(firstAlert.receivedAt)}. ` +
       "Replace this with the confirmed root cause and the contributing factors."
     : "Describe the confirmed root cause and the contributing factors.";
 

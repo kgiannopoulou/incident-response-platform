@@ -14,12 +14,17 @@ a postmortem draft is generated from what actually happened.
 | Escalation, live | Generated postmortem |
 | --- | --- |
 | ![Incident with escalation](docs/screenshots/incident-escalation.jpg) | ![Postmortem](docs/screenshots/postmortem.jpg) |
+| **Alert feed** | **API keys: rotation and revocation** |
+| ![Alerts](docs/screenshots/alerts.jpg) | ![API keys](docs/screenshots/api-keys.jpg) |
 
 ## The workflow
 
 ```
-Monitoring tool / app ──POST /api/v1/alerts──► Alert ingestion
-                                                    │  dedup key (service + source + summary, numbers masked)
+Monitoring tool / app ──POST /api/v1/alerts──► API key (hashed lookup) ─► rate limit (token bucket)
+                         Authorization: Bearer          │
+                         ir_live_…                      ▼
+                                                Alert ingestion
+                                                    │  deduplicationKey (or service + source + title, numbers masked)
                                                     ▼
                                     open incident with the same key? ──yes──► group alert into it
                                                     │ no
@@ -43,8 +48,14 @@ Monitoring tool / app ──POST /api/v1/alerts──► Alert ingestion
 
 ## Features
 
-- **Alert ingestion API** with per-service integration keys (stored hashed), PagerDuty-style
-  `trigger` / `resolve` events, and a tiny [SDK](packages/alert-sdk) with retries.
+- **Alert ingestion API** — `POST /api/v1/alerts` with `INFO` / `WARNING` / `HIGH` / `CRITICAL`
+  severities, title, description, deduplication key and free-form metadata; returns a time-sortable
+  public id (`alert_01J…`, a ULID), status and receive time. PagerDuty-style `resolve` events, and a
+  tiny [SDK](packages/alert-sdk) that retries and honours `Retry-After`.
+- **API keys per service** (`ir_live_…`): generated once and **stored only as a SHA-256 hash**;
+  several keys per service; **rotation** with a grace period in which old and new key both work;
+  instant **revocation**; **last-used** timestamps; per-key **rate limits** (Redis token bucket, with
+  `RateLimit-*` / `Retry-After` headers) and lock-out of IPs that keep sending bad keys.
 - **Deduplication & grouping** — repeats of the same problem join the open incident instead
   of paging again. Safe under concurrency: 10 simultaneous identical alerts open exactly one incident.
 - **Matching rules** per service (first match wins): open an incident with a severity override,
@@ -54,7 +65,7 @@ Monitoring tool / app ──POST /api/v1/alerts──► Alert ingestion
 - **Escalation policies** — multi-level, users or whole teams, per-level delays; acknowledging stops it.
 - **Notifications** via a background worker (BullMQ) with retries/backoff; delivered to a
   Slack-compatible webhook, or logged when none is configured.
-- **Live updates** over Server-Sent Events, fanned out through Redis pub/sub so events from the
+- **Live alert feed** (🔴 CRITICAL · 🟠 HIGH · 🟡 WARNING · 🔵 INFO, "12 sec ago") and **live updates** over Server-Sent Events, fanned out through Redis pub/sub so events from the
   API *and* the worker reach every open browser.
 - **Timeline + audit trail** — every incident has an append-only timeline; every change in the
   organization is written to the audit log in the same transaction as the change.
@@ -69,7 +80,7 @@ Monitoring tool / app ──POST /api/v1/alerts──► Alert ingestion
 ```
             ┌──────────────┐     REST + SSE      ┌──────────────┐
  Browser ──►│  apps/web    │ ──────────────────► │  apps/api    │◄── monitoring tools
-            │  Next.js     │                     │  Express     │    (integration keys)
+            │  Next.js     │                     │  Express     │    (API keys)
             └──────────────┘                     └──┬───────┬───┘
                                                     │       │ enqueue jobs / publish events
                                           SQL (tx)  │       ▼
@@ -113,6 +124,16 @@ Details and trade-offs in [docs/architecture.md](docs/architecture.md).
    so a lost queue job delays a page by seconds instead of dropping it. Escalation steps and
    deliveries are idempotent (row locks + unique index + status checks), so duplicates are harmless.
 5. **Audit entries are written in the same transaction** as the change they describe.
+6. **API keys are credentials, treated like passwords — but hashed for their threat model.** Keys
+   are 192-bit random secrets shown once; the database stores `sha256(key)` plus a non-secret prefix
+   for display. A fast hash (not bcrypt) is deliberate: there is no low-entropy secret to protect, and a
+   deterministic hash allows an indexed lookup on every request. Rotation issues a new key and puts the
+   old one on an expiry timer (grace period) so senders switch without dropping alerts; revocation is
+   immediate. `last_used_at` is written at most once a minute per key, so a busy sender doesn't turn
+   every alert into an extra row update.
+7. **Rate limiting lives in Redis, as one atomic Lua script** (token bucket using Redis' clock), so
+   every API instance shares the same limits. It fails open: during a Redis outage, losing alerts
+   would be worse than briefly losing rate limiting.
 
 ## Quick start
 
@@ -141,7 +162,7 @@ Or run everything in containers: `docker compose --profile app up --build`
 
 ```sh
 npm run simulate                # "checkout is down": 5xx alerts (grouped) + payment timeouts
-npm run simulate -- noise       # warning (recorded), staging alert (suppressed), latency (rule → SEV3)
+npm run simulate -- noise       # INFO/WARNING (recorded), staging alert (suppressed), latency (rule → SEV3)
 npm run simulate -- recover     # monitoring clears the alerts → Checkout auto-resolves
 ```
 
@@ -149,14 +170,39 @@ Watch the dashboard update live, see Sam paged in the worker log, wait two minut
 acknowledging to watch it escalate to Alex, then acknowledge, add notes, resolve, and open the
 generated postmortem.
 
-Sending an alert from anything that speaks HTTP:
+Sending an alert from anything that speaks HTTP (the seeded `checkout-api` service's dev key):
 
 ```sh
 curl -X POST http://localhost:4000/api/v1/alerts \
-  -H "Authorization: Bearer dev-key-checkout-api" \
+  -H "Authorization: Bearer ir_live_dev_checkout_api" \
   -H "Content-Type: application/json" \
-  -d '{"summary":"Checkout API 5xx rate above 5%","severity":"critical","source":"prometheus"}'
+  -d '{
+    "service": "checkout-api",
+    "severity": "critical",
+    "title": "Checkout error rate exceeded threshold",
+    "description": "Error rate reached 38%",
+    "source": "prometheus",
+    "deduplicationKey": "checkout-errors",
+    "metadata": { "errorRate": 38, "region": "eu-west-1" }
+  }'
 ```
+
+```json
+{
+  "id": "alert_01M4V1JQA6G5TKEBVMPF8Z6DPZ",
+  "status": "triggered",
+  "receivedAt": "2026-10-13T16:29:54Z",
+  "service": "checkout-api",
+  "deduplicationKey": "checkout-errors",
+  "decision": "incident_created",
+  "reason": "Default rule: critical/high alerts open an incident",
+  "incident": { "id": 2, "number": 2, "status": "triggered" }
+}
+```
+
+New services get a random key (`ir_live_` + 48 hex chars) that is shown once; manage keys under
+**Services → API keys** (create, rotate with a grace period, revoke). `npm run simulate -- burst`
+sends 150 alerts back to back to show the rate limiter answering `429`.
 
 ## Data model
 
@@ -192,14 +238,17 @@ npm run typecheck
 npm run lint
 ```
 
-- **Unit** (`packages/shared`, `packages/alert-sdk`): state machine, rule engine, dedup keys,
-  postmortem generator, SDK retry behaviour.
+- **Unit** (`packages/shared`, `packages/alert-sdk`): alert payload validation, ULID ids, API key
+  generation/hashing, state machine, rule engine, dedup keys, postmortem generator, SDK retries and
+  `Retry-After` handling.
 - **Integration** (`apps/api`, `apps/worker`): run against a real Postgres test database
   (`incidents_test`, created and migrated automatically) and Redis. They cover ingestion,
   grouping, the concurrent-alert race, concurrent acknowledgements, the lifecycle and its
   timeline/audit trail, auto-resolve, reopen conflicts, tenant isolation, roles, alert rules,
   SSE delivery and isolation, escalation level by level, idempotent paging, notification retries,
-  and sweeper recovery after a lost queue.
+  and sweeper recovery after a lost queue. The API-key suite checks that the plaintext key appears
+  nowhere in the database, rotation grace periods and expiry, immediate revocation, throttled
+  last-used timestamps, per-key token buckets with headers, and the bad-key IP lock-out.
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs typecheck, lint, all tests
 against Postgres/Redis service containers, the web production build, and the Docker image build.
@@ -209,5 +258,5 @@ against Postgres/Redis service containers, the web production build, and the Doc
 - On-call schedules (rotations) as escalation targets instead of fixed users
 - Email/SMS channels and per-user notification preferences
 - Status page for customers, driven by service status
-- Rate limiting and payload size quotas per integration key
+- Scoped API keys (e.g. trigger-only vs. resolve) and per-organization quotas
 - Slack slash-commands to acknowledge/resolve from chat

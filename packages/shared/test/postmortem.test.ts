@@ -15,8 +15,8 @@ describe("buildPostmortemDraft", () => {
       resolvedAt: t(65),
     },
     alerts: [
-      { summary: "5xx rate above 5%", severity: "critical", source: "prometheus", receivedAt: t(0) },
-      { summary: "p99 latency high", severity: "error", source: "datadog", receivedAt: t(2) },
+      { title: "5xx rate above 5%", severity: "critical", source: "prometheus", receivedAt: t(0) },
+      { title: "p99 latency high", severity: "high", source: "datadog", receivedAt: t(2) },
     ],
     timeline: [
       { type: "incident_created", message: "Incident opened by alert", actorName: null, createdAt: t(0) },

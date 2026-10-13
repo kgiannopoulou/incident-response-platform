@@ -78,7 +78,7 @@ describe("GET /api/v1/stream (SSE)", () => {
     expect(await acme.next((e) => e.type === "connected")).toBeTruthy();
     expect(await other.next((e) => e.type === "connected")).toBeTruthy();
 
-    await t.alert(TEST_KEYS.checkout, { summary: "Checkout down", severity: "critical", source: "probe" });
+    await t.alert(TEST_KEYS.checkout, { title: "Checkout down", severity: "critical", source: "probe" });
 
     expect(await acme.next((e) => e.type === "incident.created")).toMatchObject({ number: 1 });
     expect(await acme.next((e) => e.type === "service.updated")).toBeTruthy();

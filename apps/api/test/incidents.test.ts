@@ -10,7 +10,7 @@ beforeAll(async () => {
 afterAll(() => t.close());
 beforeEach(() => t.reset());
 
-const critical = { summary: "Checkout down", severity: "critical", source: "probe" };
+const critical = { title: "Checkout down", severity: "critical", source: "probe" };
 const api = () => request(t.app);
 
 describe("auth", () => {
@@ -171,11 +171,10 @@ describe("multi-tenancy and roles", () => {
     const alex = await t.as("alex");
     const created = await api().post("/api/v1/services").set(alex).send({ name: "Search API" });
     expect(created.status).toBe(201);
-    // The returned key works for ingestion right away (and is stored only as a hash).
-    const res = await t.alert(created.body.integrationKey, critical);
+    expect(created.body.service.slug).toBe("search-api");
+    // The returned key works for ingestion right away.
+    const res = await t.alert(created.body.apiKey.key, { ...critical, service: "search-api" });
     expect(res.body.decision).toBe("incident_created");
-    const { rows } = await t.deps.pool.query(`SELECT integration_key_hash FROM services WHERE name = 'Search API'`);
-    expect(rows[0].integration_key_hash).not.toContain(created.body.integrationKey);
   });
 
   it("replaces alert rules and applies them to new alerts", async () => {
@@ -187,14 +186,14 @@ describe("multi-tenancy and roles", () => {
         rules: [
           {
             name: "Page on login warnings",
-            conditions: [{ field: "summary", op: "contains", value: "login" }],
+            conditions: [{ field: "title", op: "contains", value: "login" }],
             action: "create_incident",
             incidentSeverity: "sev3",
           },
         ],
       })
       .expect(200);
-    const res = await t.alert(TEST_KEYS.auth, { summary: "Login errors rising", severity: "warning", source: "probe" });
+    const res = await t.alert(TEST_KEYS.auth, { title: "Login errors rising", severity: "warning", source: "probe" });
     expect(res.body.decision).toBe("incident_created");
     const { rows } = await t.deps.pool.query(`SELECT severity FROM incidents`);
     expect(rows[0].severity).toBe("sev3");
@@ -204,7 +203,7 @@ describe("multi-tenancy and roles", () => {
 describe("dashboard data", () => {
   it("reports open incidents and response metrics", async () => {
     await t.alert(TEST_KEYS.checkout, critical);
-    await t.alert(TEST_KEYS.auth, { ...critical, summary: "Auth down" });
+    await t.alert(TEST_KEYS.auth, { ...critical, title: "Auth down" });
     const sam = await t.as("sam");
     await api().post("/api/v1/incidents/1/acknowledge").set(sam).expect(200);
 

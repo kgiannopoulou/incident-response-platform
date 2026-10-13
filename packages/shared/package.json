@@ -6,7 +6,8 @@
   "description": "Domain types, validation schemas and pure business logic shared by the API, worker and web app.",
   "exports": {
     ".": "./src/index.ts",
-    "./dedup": "./src/dedup.ts"
+    "./dedup": "./src/dedup.ts",
+    "./crypto": "./src/crypto.ts"
   },
   "scripts": {
     "typecheck": "tsc -p .",

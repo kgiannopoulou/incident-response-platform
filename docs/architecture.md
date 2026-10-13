@@ -18,26 +18,70 @@ Redis pub/sub, and the worker's correctness relies on row locks, not on being th
 
 ## Alert ingestion
 
-`POST /api/v1/alerts` authenticates with a per-service integration key. Keys are random 192-bit
-secrets returned once on creation/rotation; only their SHA-256 hash is stored, so a database leak
-doesn't leak working keys. The key identifies both the organization and the service, so a monitoring
-tool can't send alerts into another tenant.
+`POST /api/v1/alerts` takes `{ service, severity, title, description, source, deduplicationKey,
+metadata }` and answers `{ id, status, receivedAt, … }`. Severities are `INFO`, `WARNING`, `HIGH`,
+`CRITICAL` (case-insensitive). Alert ids are `alert_` + a ULID: unlike a SERIAL they don't reveal
+volume or allow enumeration, and unlike a UUIDv4 they sort by creation time. API keys and rate
+limiting run before any of this (next section).
 
 Inside one transaction:
 
-1. **Dedup key** — the client's `dedupKey`, or `sha256(service | source | normalized summary)`.
+1. **Dedup key** — the client's `deduplicationKey`, or `sha256(service | source | normalized title)`.
    Normalization lower-cases, collapses whitespace and masks numbers, so
    `p99 latency 2300ms` and `p99 latency 2410ms` are the same alert.
 2. **Maintenance** — alerts for a service in maintenance are stored as `suppressed`; nobody is paged.
 3. **Grouping first** — if an open incident exists for `(service, dedup key)` the alert is attached
    to it (`SELECT … FOR UPDATE`), whatever the rules would say about a fresh alert.
 4. **Rules** — the service's ordered rules (`packages/shared/src/rules.ts`, a pure function) decide:
-   create an incident (optionally overriding severity), record only, or suppress. Default: critical
-   and error alerts open incidents; warning and info are recorded.
+   create an incident (optionally overriding severity), record only, or suppress. Default: CRITICAL
+   and HIGH alerts open incidents (SEV1 / SEV2); WARNING and INFO are recorded.
 5. **Create** — see the race below.
 
 The endpoint returns `202 Accepted` with the decision (`incident_created`, `grouped`, `recorded`,
 `suppressed`, `maintenance`, `resolved`) so integrations and tests can see exactly what happened.
+
+## API keys
+
+Machines authenticate with API keys, one or more per service (`api_keys` table).
+
+- **Generated once, stored hashed.** A key is `ir_live_` + 192 random bits (48 hex chars). The
+  plaintext exists in exactly one HTTP response — create or rotate — and the table keeps
+  `sha256(key)` plus a display prefix (`ir_live_a8f83e7c`) so people can tell keys apart in the UI,
+  audit log and alert records. A database dump yields no usable keys. SHA-256 rather than
+  bcrypt/argon2 is deliberate: slow hashes protect *low-entropy* secrets from guessing; a 192-bit
+  random key can't be guessed anyway, and a deterministic hash allows `WHERE key_hash = $1` on an
+  index for every request. The recognisable prefix lets secret scanners flag a leaked key.
+- **The key decides the service.** The `service` field in the body is optional; if present it must
+  match the key's service (`403` otherwise), so a key can't post as another service or tenant.
+- **Rotation with a grace period.** Rotating issues a replacement with the same name and limit and
+  sets `expires_at = now() + graceMinutes` on the old key (default 60 minutes, `0` = immediately), so
+  senders can roll the new key out without dropping alerts. `replaced_by_id` links the two.
+- **Revocation** sets `revoked_at`: the next request gets `401 API key has been revoked`. Error
+  messages distinguish unknown / revoked / expired, which costs nothing (the caller already holds
+  the key) and saves on-call engineers a lot of guessing.
+- **Last used.** `last_used_at` answers "is anything still using this key before I revoke it?".
+  It's written at most once a minute per key (`… WHERE last_used_at < now() - interval '60 seconds'`),
+  so a busy sender doesn't turn every alert into an extra row update and lock.
+- Create, rotate and revoke are audited with the key prefix, never the key.
+
+Migration `0002` moved the original single key per service into this table unchanged (same hash),
+so existing senders kept working; a test-run against the populated dev database confirmed it.
+
+## Rate limiting
+
+Two limits, both in Redis so every API instance shares them (`apps/api/src/lib/rate-limit.ts`):
+
+1. **Per key — token bucket.** Capacity = the key's `rate_limit_per_minute` (default 120), refilled
+   continuously, so a sender can burst and then sustain limit/60 per second. Read-refill-take is one
+   Lua script, so it's atomic under concurrency, and it uses Redis' `TIME` so API instances with
+   skewed clocks agree. Responses carry `RateLimit-Limit` / `RateLimit-Remaining` /
+   `RateLimit-Reset`; a `429` adds `Retry-After`, which the SDK waits for.
+2. **Per IP — failed authentications.** 20 bad keys in a minute and that IP gets `429` before its key
+   is even looked up, which makes guessing pointless and stops a misconfigured sender from hammering
+   the database.
+
+Both fail open: if Redis is down the request is allowed and the error logged. For an alerting
+system, dropping alerts during an outage is worse than briefly not rate limiting.
 
 ### The duplicate-alert race
 
@@ -130,7 +174,7 @@ streams, and `retry: 3000` makes browsers reconnect automatically.
 ## Multi-tenancy and authorization
 
 Every business table has `organization_id`; every query filters on the organization from the JWT
-(or from the integration key). Incident routes use the per-organization number (`INC-42`), so
+(or from the API key). Incident routes use the per-organization number (`INC-42`), so
 tenant B's `INC-1` is a different incident from tenant A's `INC-1`, and there is no global id to guess.
 Cross-references (adding a responder, choosing a team or escalation policy) are checked to belong to
 the same organization. Roles: `admin` manages services, rules and keys and can read the audit log;
@@ -153,6 +197,6 @@ narrative a responder has written.
 
 - **Outbox table** instead of post-commit flush + sweeper, if more event types need guaranteed delivery.
 - **Partitioning / retention** for `alerts`, `timeline_events` and `audit_log`.
-- **Rate limiting** per integration key, and request size quotas.
+- **Scoped keys** (trigger-only vs. resolve) and per-organization quotas on top of per-key limits.
 - **On-call schedules** as escalation targets; email/SMS channels.
 - **OpenTelemetry** traces across API → queue → worker.

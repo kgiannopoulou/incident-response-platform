@@ -15,4 +15,12 @@ export const env = {
   webOrigin: process.env.WEB_ORIGIN ?? "http://localhost:3000",
   // Set COOKIE_SECURE=true when serving over HTTPS.
   secureCookies: process.env.COOKIE_SECURE === "true",
+  // Failed API-key authentications allowed per client IP per minute.
+  authFailuresPerMinute: Number(process.env.AUTH_FAILURES_PER_MINUTE ?? 20),
+  // e.g. "1" behind one reverse proxy; unset = use the socket address.
+  trustProxy: process.env.TRUST_PROXY
+    ? /^\d+$/.test(process.env.TRUST_PROXY)
+      ? Number(process.env.TRUST_PROXY)
+      : process.env.TRUST_PROXY
+    : undefined,
 };

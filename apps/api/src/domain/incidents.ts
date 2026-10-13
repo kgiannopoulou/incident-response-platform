@@ -175,7 +175,7 @@ export async function attachAlert(
   db: PoolClient,
   fx: Effects,
   incident: IncidentRow,
-  alert: { id: number; summary: string; source: string },
+  alert: { id: number; title: string; source: string },
   isFirst: boolean
 ) {
   await db.query(`INSERT INTO incident_alerts (incident_id, alert_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, [
@@ -184,7 +184,7 @@ export async function attachAlert(
   ]);
   await db.query(`UPDATE incidents SET alert_count = alert_count + 1 WHERE id = $1`, [incident.id]);
   if (!isFirst) {
-    await addTimeline(db, fx, incident, "alert_attached", `Alert grouped: "${alert.summary}" from ${alert.source}`, null, {
+    await addTimeline(db, fx, incident, "alert_attached", `Alert grouped: "${alert.title}" from ${alert.source}`, null, {
       alertId: alert.id,
     });
   }
@@ -359,7 +359,7 @@ export async function generatePostmortem(
   const [{ rows: svc }, { rows: alerts }, { rows: timeline }, { rows: responders }] = await Promise.all([
     db.query(`SELECT name FROM services WHERE id = $1`, [incident.service_id]),
     db.query(
-      `SELECT a.summary, a.severity, a.source, a.received_at FROM alerts a
+      `SELECT a.title, a.severity, a.source, a.received_at FROM alerts a
        JOIN incident_alerts ia ON ia.alert_id = a.id WHERE ia.incident_id = $1`,
       [incident.id]
     ),
@@ -384,7 +384,7 @@ export async function generatePostmortem(
       acknowledgedAt: incident.acknowledged_at,
       resolvedAt: incident.resolved_at,
     },
-    alerts: alerts.map((a) => ({ summary: a.summary, severity: a.severity, source: a.source, receivedAt: a.received_at })),
+    alerts: alerts.map((a) => ({ title: a.title, severity: a.severity, source: a.source, receivedAt: a.received_at })),
     timeline: timeline.map((t) => ({ type: t.type, message: t.message, actorName: t.actor_name, createdAt: t.created_at })),
     responders: responders.map((r) => ({ name: r.name, role: r.role })),
   });

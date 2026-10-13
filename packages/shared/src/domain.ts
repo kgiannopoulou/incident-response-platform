@@ -2,8 +2,13 @@
 // web app can't drift apart (the database CHECK constraints in
 // packages/database/migrations mirror these lists).
 
-export const ALERT_SEVERITIES = ["critical", "error", "warning", "info"] as const;
+// The alert API accepts these in any case ("CRITICAL", "critical") and
+// stores them lower-case.
+export const ALERT_SEVERITIES = ["critical", "high", "warning", "info"] as const;
 export type AlertSeverity = (typeof ALERT_SEVERITIES)[number];
+
+export const ALERT_STATUSES = ["triggered", "resolved", "suppressed"] as const;
+export type AlertStatus = (typeof ALERT_STATUSES)[number];
 
 export const INCIDENT_SEVERITIES = ["sev1", "sev2", "sev3", "sev4"] as const;
 export type IncidentSeverity = (typeof INCIDENT_SEVERITIES)[number];
@@ -21,7 +26,7 @@ export type Role = (typeof ROLES)[number];
 export const ALERT_SEVERITY_RANK: Record<AlertSeverity, number> = {
   info: 0,
   warning: 1,
-  error: 2,
+  high: 2,
   critical: 3,
 };
 
@@ -36,7 +41,7 @@ export const INCIDENT_SEVERITY_RANK: Record<IncidentSeverity, number> = {
 // matching rule doesn't override it.
 export const SEVERITY_FROM_ALERT: Record<AlertSeverity, IncidentSeverity> = {
   critical: "sev1",
-  error: "sev2",
+  high: "sev2",
   warning: "sev3",
   info: "sev4",
 };

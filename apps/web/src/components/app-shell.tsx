@@ -10,6 +10,7 @@ import { cx, ErrorState, Loading } from "./ui";
 const NAV = [
   { href: "/", label: "Dashboard" },
   { href: "/incidents", label: "Incidents" },
+  { href: "/alerts", label: "Alerts" },
   { href: "/services", label: "Services" },
   { href: "/audit", label: "Audit log", adminOnly: true },
 ];

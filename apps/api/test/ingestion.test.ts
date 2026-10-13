@@ -10,7 +10,7 @@ afterAll(() => t.close());
 beforeEach(() => t.reset());
 
 const critical = {
-  summary: "Checkout 5xx rate above 5% (currently 23%)",
+  title: "Checkout 5xx rate above 5% (currently 23%)",
   severity: "critical",
   source: "prometheus:checkout-5xx",
 };
@@ -43,7 +43,7 @@ describe("POST /api/v1/alerts", () => {
 
   it("groups repeats of the same alert (numbers masked) into the open incident", async () => {
     await t.alert(TEST_KEYS.checkout, critical);
-    const res = await t.alert(TEST_KEYS.checkout, { ...critical, summary: "Checkout 5xx rate above 5% (currently 31%)" });
+    const res = await t.alert(TEST_KEYS.checkout, { ...critical, title: "Checkout 5xx rate above 5% (currently 31%)" });
     expect(res.body).toMatchObject({ decision: "grouped", incident: { number: 1 } });
 
     const { rows } = await t.deps.pool.query(`SELECT count(*)::int AS n, max(alert_count) AS alerts FROM incidents`);
@@ -60,7 +60,7 @@ describe("POST /api/v1/alerts", () => {
   });
 
   it("records warnings without paging and suppresses rule matches", async () => {
-    const warning = await t.alert(TEST_KEYS.checkout, { summary: "Disk 81% full", severity: "warning", source: "node" });
+    const warning = await t.alert(TEST_KEYS.checkout, { title: "Disk 81% full", severity: "warning", source: "node" });
     expect(warning.body.decision).toBe("recorded");
     const staging = await t.alert(TEST_KEYS.checkout, { ...critical, source: "staging-probe" });
     expect(staging.body).toMatchObject({ decision: "suppressed", reason: 'Suppressed by rule "Ignore staging"' });

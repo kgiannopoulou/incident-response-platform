@@ -6,13 +6,14 @@
 //   sam@acme.test    — responder, Payments team (first on call)
 //   jordan@acme.test — responder, Platform team
 //
-// Integration keys (send alerts with `Authorization: Bearer <key>`):
-//   Checkout API           dev-key-checkout-api
-//   Authentication Service dev-key-auth-service
-//   PostgreSQL Primary     dev-key-postgres-primary
-//   IoT Gateway            dev-key-iot-gateway
+// Service slugs and API keys (send alerts with `Authorization: Bearer <key>`):
+//   checkout-api       ir_live_dev_checkout_api
+//   auth-service       ir_live_dev_auth_service
+//   postgres-primary   ir_live_dev_postgres_primary
+//   iot-gateway        ir_live_dev_iot_gateway
 import bcrypt from "bcryptjs";
-import { hashIntegrationKey } from "@irp/shared/dedup";
+import { ulid } from "@irp/shared";
+import { apiKeyDisplayPrefix, hashApiKey } from "@irp/shared/crypto";
 import { createPool, withTransaction } from "./index";
 
 const pool = createPool();
@@ -28,7 +29,7 @@ async function main() {
   }
   await withTransaction(pool, async (db) => {
     await db.query(`
-      TRUNCATE audit_log, postmortems, notifications, timeline_events, incident_responders,
+      TRUNCATE audit_log, api_keys, postmortems, notifications, timeline_events, incident_responders,
         incident_alerts, alerts, incidents, alert_rules, services, escalation_rules,
         escalation_policies, team_members, teams, organization_members, users, organizations
       RESTART IDENTITY CASCADE
@@ -96,8 +97,11 @@ async function main() {
       { delay: 3, user: users.alex },
     ]);
 
+    // Each service gets one API key. Real keys are random (generateApiKey);
+    // these fixed dev keys just make the README examples copy-pasteable.
     const service = async (
       name: string,
+      slug: string,
       description: string,
       teamId: number,
       policyId: number,
@@ -105,37 +109,43 @@ async function main() {
       autoResolve = false
     ) => {
       const { rows } = await db.query(
-        `INSERT INTO services (organization_id, team_id, escalation_policy_id, name, description,
-                               integration_key_hash, auto_resolve)
+        `INSERT INTO services (organization_id, team_id, escalation_policy_id, name, slug, description, auto_resolve)
          VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-        [org.id, teamId, policyId, name, description, hashIntegrationKey(key), autoResolve]
+        [org.id, teamId, policyId, name, slug, description, autoResolve]
+      );
+      await db.query(
+        `INSERT INTO api_keys (organization_id, service_id, name, prefix, key_hash, created_by)
+         VALUES ($1, $2, 'Prometheus', $3, $4, $5)`,
+        [org.id, rows[0].id, apiKeyDisplayPrefix(key), hashApiKey(key), users.alex]
       );
       return rows[0].id as number;
     };
     const checkout = await service(
       "Checkout API",
+      "checkout-api",
       "Cart, payment and order placement",
       payments,
       paymentsPolicy,
-      "dev-key-checkout-api",
+      "ir_live_dev_checkout_api",
       true
     );
     const auth = await service(
       "Authentication Service",
+      "auth-service",
       "Login, sessions and tokens",
       platform,
       platformPolicy,
-      "dev-key-auth-service"
+      "ir_live_dev_auth_service"
     );
-    await service("PostgreSQL Primary", "Primary OLTP database", platform, platformPolicy, "dev-key-postgres-primary");
-    await service("IoT Gateway", "MQTT ingestion from store sensors", platform, platformPolicy, "dev-key-iot-gateway");
+    await service("PostgreSQL Primary", "postgres-primary", "Primary OLTP database", platform, platformPolicy, "ir_live_dev_postgres_primary");
+    await service("IoT Gateway", "iot-gateway", "MQTT ingestion from store sensors", platform, platformPolicy, "ir_live_dev_iot_gateway");
 
     // Matching rules for the checkout service, to show rule evaluation.
     await db.query(
       `INSERT INTO alert_rules (service_id, position, name, conditions, action, incident_severity) VALUES
        ($1, 0, 'Ignore staging probes', '[{"field":"source","op":"contains","value":"staging"}]', 'suppress', NULL),
        ($1, 1, 'Page on payment latency warnings',
-        '[{"field":"summary","op":"contains","value":"latency"},{"field":"severity","op":"at_least","value":"warning"}]',
+        '[{"field":"title","op":"contains","value":"latency"},{"field":"severity","op":"at_least","value":"warning"}]',
         'create_incident', 'sev3')`,
       [checkout]
     );
@@ -156,12 +166,12 @@ async function main() {
     const {
       rows: [pastAlert],
     } = await db.query(
-      `INSERT INTO alerts (organization_id, service_id, dedup_key, summary, severity, source, status,
-                           received_at, resolved_at)
-       VALUES ($1, $2, 'seed-auth-latency', 'Login p95 latency 3400ms', 'error', 'prometheus:auth-latency',
-               'resolved', $3, $3::timestamptz + interval '47 minutes')
+      `INSERT INTO alerts (organization_id, service_id, public_id, dedup_key, title, description, severity,
+                           source, status, received_at, resolved_at)
+       VALUES ($1, $2, $4, 'seed-auth-latency', 'Login p95 latency 3400ms', 'p95 above the 3s SLO for 5 minutes',
+               'high', 'prometheus:auth-latency', 'resolved', $3, $3::timestamptz + interval '47 minutes')
        RETURNING id`,
-      [org.id, auth, past.triggered_at]
+      [org.id, auth, past.triggered_at, `alert_${ulid(new Date(past.triggered_at).getTime())}`]
     );
     await db.query(`UPDATE organizations SET incident_counter = 1 WHERE id = $1`, [org.id]);
     await db.query(`INSERT INTO incident_alerts (incident_id, alert_id) VALUES ($1, $2)`, [past.id, pastAlert.id]);

@@ -1,16 +1,20 @@
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
+import type { Redis } from "ioredis";
 import { withTransaction } from "@irp/database";
 import { computeDedupKey } from "@irp/shared/dedup";
-import { evaluateRules, type AlertPayload, type AlertRule, type RuleCondition } from "@irp/shared";
+import {
+  evaluateRules,
+  newAlertId,
+  type AlertPayload,
+  type AlertRule,
+  type AlertSeverity,
+  type AlertStatus,
+  type RuleCondition,
+} from "@irp/shared";
+import type { Deps } from "../deps";
 import { audit } from "../lib/audit";
 import { Effects } from "../lib/effects";
-import {
-  addTimeline,
-  attachAlert,
-  changeStatus,
-  createIncident,
-  type IncidentRow,
-} from "./incidents";
+import { addTimeline, attachAlert, changeStatus, createIncident, type IncidentRow } from "./incidents";
 
 // The alert ingestion pipeline behind POST /api/v1/alerts:
 //
@@ -27,21 +31,27 @@ export type IngestService = {
   id: number;
   organization_id: number;
   name: string;
+  slug: string;
   status: string;
   auto_resolve: boolean;
 };
 
 export type IngestResult = {
-  alertId: number | null;
-  dedupKey: string;
+  id: string | null; // "alert_<ULID>"; null for a resolve
+  status: AlertStatus;
+  receivedAt: string; // ISO 8601, second precision: "2026-10-10T06:32:18Z"
+  service: string;
+  deduplicationKey: string;
   decision: "incident_created" | "grouped" | "recorded" | "suppressed" | "resolved" | "maintenance";
   reason: string;
   incident: { id: number; number: number; status: string } | null;
+  resolvedCount?: number;
 };
 
 const summarize = (i: IncidentRow | null) => (i ? { id: i.id, number: i.number, status: i.status } : null);
+const isoSeconds = (d: Date) => d.toISOString().replace(/\.\d{3}Z$/, "Z");
 
-async function findOpenIncident(db: import("pg").PoolClient, serviceId: number, dedupKey: string) {
+async function findOpenIncident(db: PoolClient, serviceId: number, dedupKey: string) {
   const { rows } = await db.query<IncidentRow>(
     `SELECT * FROM incidents WHERE service_id = $1 AND dedup_key = $2 AND status <> 'resolved' FOR UPDATE`,
     [serviceId, dedupKey]
@@ -50,53 +60,75 @@ async function findOpenIncident(db: import("pg").PoolClient, serviceId: number, 
 }
 
 export async function ingestAlert(
-  deps: { pool: Pool; redis: import("ioredis").Redis; queues: import("../deps").Deps["queues"] },
+  deps: { pool: Pool; redis: Redis; queues: Deps["queues"] },
   service: IngestService,
+  apiKeyId: number | null,
   payload: AlertPayload
 ): Promise<IngestResult> {
-  const dedupKey = payload.dedupKey ?? computeDedupKey(service.id, payload.source, payload.summary);
+  const dedupKey = payload.deduplicationKey ?? computeDedupKey(service.id, payload.source, payload.title!);
   const fx = new Effects();
 
   const result = await withTransaction(deps.pool, async (db): Promise<IngestResult> => {
     if (payload.action === "resolve") {
       return resolveAlerts(db, fx, service, dedupKey);
     }
+    const title = payload.title!;
+    const severity = payload.severity as AlertSeverity;
 
-    const insertAlert = async (status: "firing" | "suppressed", ruleId: number | null) => {
-      const { rows } = await db.query<{ id: number }>(
-        `INSERT INTO alerts (organization_id, service_id, dedup_key, summary, severity, source, component,
-                             details, status, matched_rule_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+    const insertAlert = async (status: AlertStatus, ruleId: number | null) => {
+      const { rows } = await db.query<{ id: number; public_id: string; received_at: Date }>(
+        `INSERT INTO alerts (organization_id, service_id, public_id, api_key_id, dedup_key, title, description,
+                             severity, source, metadata, status, matched_rule_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         RETURNING id, public_id, received_at`,
         [
           service.organization_id,
           service.id,
+          newAlertId(),
+          apiKeyId,
           dedupKey,
-          payload.summary,
-          payload.severity,
+          title,
+          payload.description,
+          severity,
           payload.source,
-          payload.component ?? null,
-          JSON.stringify(payload.details),
+          JSON.stringify(payload.metadata),
           status,
           ruleId,
         ]
       );
       fx.publish(service.organization_id, { type: "alert.received", alertId: rows[0].id, serviceId: service.id });
-      return { id: rows[0].id, summary: payload.summary, source: payload.source };
+      return { ...rows[0], title, source: payload.source, status };
     };
+
+    const respond = (
+      alert: Awaited<ReturnType<typeof insertAlert>>,
+      decision: IngestResult["decision"],
+      reason: string,
+      incident: IncidentRow | null
+    ): IngestResult => ({
+      id: alert.public_id,
+      status: alert.status,
+      receivedAt: isoSeconds(alert.received_at),
+      service: service.slug,
+      deduplicationKey: dedupKey,
+      decision,
+      reason,
+      incident: summarize(incident),
+    });
 
     // Planned maintenance: keep the record, page nobody.
     if (service.status === "maintenance") {
       const alert = await insertAlert("suppressed", null);
-      return { alertId: alert.id, dedupKey, decision: "maintenance", reason: "Service is in maintenance", incident: null };
+      return respond(alert, "maintenance", "Service is in maintenance", null);
     }
 
     // Grouping comes first: a repeat of an alert that already has an open
     // incident joins it, whatever the rules would say about a fresh alert.
     const open = await findOpenIncident(db, service.id, dedupKey);
     if (open) {
-      const alert = await insertAlert("firing", null);
+      const alert = await insertAlert("triggered", null);
       await attachAlert(db, fx, open, alert, false);
-      return { alertId: alert.id, dedupKey, decision: "grouped", reason: "Grouped into open incident", incident: summarize(open) };
+      return respond(alert, "grouped", "Grouped into open incident", open);
     }
 
     const { rows: ruleRows } = await db.query<{
@@ -105,27 +137,35 @@ export async function ingestAlert(
       conditions: RuleCondition[];
       action: AlertRule["action"];
       incident_severity: AlertRule["incidentSeverity"];
-    }>(`SELECT id, name, conditions, action, incident_severity FROM alert_rules WHERE service_id = $1 ORDER BY position, id`, [
-      service.id,
-    ]);
+    }>(
+      `SELECT id, name, conditions, action, incident_severity FROM alert_rules
+       WHERE service_id = $1 ORDER BY position, id`,
+      [service.id]
+    );
     const decision = evaluateRules(
-      payload,
-      ruleRows.map((r) => ({ id: r.id, name: r.name, conditions: r.conditions, action: r.action, incidentSeverity: r.incident_severity }))
+      { severity, source: payload.source, title, description: payload.description },
+      ruleRows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        conditions: r.conditions,
+        action: r.action,
+        incidentSeverity: r.incident_severity,
+      }))
     );
 
     if (decision.action === "suppress") {
       const alert = await insertAlert("suppressed", decision.ruleId);
-      return { alertId: alert.id, dedupKey, decision: "suppressed", reason: decision.reason, incident: null };
+      return respond(alert, "suppressed", decision.reason, null);
     }
-    const alert = await insertAlert("firing", decision.ruleId);
+    const alert = await insertAlert("triggered", decision.ruleId);
     if (decision.action === "record_only") {
-      return { alertId: alert.id, dedupKey, decision: "recorded", reason: decision.reason, incident: null };
+      return respond(alert, "recorded", decision.reason, null);
     }
 
     const incident = await createIncident(db, fx, {
       organizationId: service.organization_id,
       serviceId: service.id,
-      title: payload.summary,
+      title,
       severity: decision.severity,
       dedupKey,
       actor: null,
@@ -133,7 +173,7 @@ export async function ingestAlert(
     });
     if (incident) {
       await attachAlert(db, fx, incident, alert, true);
-      return { alertId: alert.id, dedupKey, decision: "incident_created", reason: decision.reason, incident: summarize(incident) };
+      return respond(alert, "incident_created", decision.reason, incident);
     }
 
     // Lost the race: a concurrent request opened the incident for this key
@@ -141,7 +181,7 @@ export async function ingestAlert(
     const winner = await findOpenIncident(db, service.id, dedupKey);
     if (!winner) throw new Error("Dedup conflict without an open incident");
     await attachAlert(db, fx, winner, alert, false);
-    return { alertId: alert.id, dedupKey, decision: "grouped", reason: "Grouped into open incident", incident: summarize(winner) };
+    return respond(alert, "grouped", "Grouped into open incident", winner);
   });
 
   await fx.flush(deps);
@@ -149,19 +189,19 @@ export async function ingestAlert(
 }
 
 // action: "resolve" — the monitoring tool says the problem cleared. Marks
-// the matching firing alerts resolved; if the service has auto_resolve and
-// an incident has no firing alerts left, the incident is resolved too
+// the matching triggered alerts resolved; if the service has auto_resolve
+// and an incident has no triggered alerts left, the incident is resolved too
 // (through the normal state machine, so it gets a postmortem draft and
 // resolve notifications like any other).
 async function resolveAlerts(
-  db: import("pg").PoolClient,
+  db: PoolClient,
   fx: Effects,
   service: IngestService,
   dedupKey: string
 ): Promise<IngestResult> {
   const { rows: resolved } = await db.query<{ id: number }>(
     `UPDATE alerts SET status = 'resolved', resolved_at = now()
-     WHERE service_id = $1 AND dedup_key = $2 AND status = 'firing' RETURNING id`,
+     WHERE service_id = $1 AND dedup_key = $2 AND status = 'triggered' RETURNING id`,
     [service.id, dedupKey]
   );
   const incident = await findOpenIncident(db, service.id, dedupKey);
@@ -172,13 +212,13 @@ async function resolveAlerts(
       alertIds: resolved.map((r) => r.id),
     });
     const {
-      rows: [{ firing }],
+      rows: [{ active }],
     } = await db.query(
-      `SELECT count(*)::int AS firing FROM alerts a JOIN incident_alerts ia ON ia.alert_id = a.id
-       WHERE ia.incident_id = $1 AND a.status = 'firing'`,
+      `SELECT count(*)::int AS active FROM alerts a JOIN incident_alerts ia ON ia.alert_id = a.id
+       WHERE ia.incident_id = $1 AND a.status = 'triggered'`,
       [incident.id]
     );
-    if (service.auto_resolve && firing === 0) {
+    if (service.auto_resolve && active === 0) {
       finalIncident = await changeStatus(db, fx, incident, "resolved", null, "all alerts cleared (auto-resolve)");
     }
   }
@@ -189,13 +229,17 @@ async function resolveAlerts(
     action: "alert.resolve",
     entityType: "service",
     entityId: service.id,
-    details: { dedupKey, alertsResolved: resolved.length },
+    details: { deduplicationKey: dedupKey, alertsResolved: resolved.length },
   });
   return {
-    alertId: null,
-    dedupKey,
+    id: null,
+    status: "resolved",
+    receivedAt: isoSeconds(new Date()),
+    service: service.slug,
+    deduplicationKey: dedupKey,
     decision: "resolved",
-    reason: `${resolved.length} firing alert(s) resolved`,
+    reason: `${resolved.length} triggered alert(s) resolved`,
     incident: summarize(finalIncident),
+    resolvedCount: resolved.length,
   };
 }

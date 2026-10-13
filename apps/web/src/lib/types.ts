@@ -1,4 +1,4 @@
-import type { IncidentSeverity, IncidentStatus, ServiceStatus } from "@irp/shared";
+import type { AlertSeverity, AlertStatus, IncidentSeverity, IncidentStatus, ServiceStatus } from "@irp/shared";
 
 export type User = {
   id: number;
@@ -41,13 +41,13 @@ export type IncidentDetail = {
     allowed_transitions: IncidentStatus[];
   };
   alerts: {
-    id: number;
-    summary: string;
-    severity: string;
+    id: string;
+    title: string;
+    description: string;
+    severity: AlertSeverity;
     source: string;
-    component: string | null;
-    status: string;
-    details: Record<string, unknown>;
+    status: AlertStatus;
+    metadata: Record<string, unknown>;
     received_at: string;
   }[];
   timeline: TimelineEvent[];
@@ -68,6 +68,8 @@ export type IncidentDetail = {
 export type Service = {
   id: number;
   name: string;
+  slug: string;
+  active_keys: number;
   description: string;
   status: ServiceStatus;
   auto_resolve: boolean;
@@ -79,16 +81,41 @@ export type Service = {
 };
 
 export type AlertRow = {
-  id: number;
-  summary: string;
-  severity: string;
+  id: string; // "alert_01J..."
+  title: string;
+  description: string;
+  severity: AlertSeverity;
   source: string;
-  status: string;
+  status: AlertStatus;
+  dedup_key: string;
+  metadata: Record<string, unknown>;
   received_at: string;
+  resolved_at: string | null;
+  service_id: number;
   service_name: string;
+  service_slug: string;
   matched_rule: string | null;
+  api_key_prefix: string | null;
   incident_number: number | null;
 };
+
+export type ApiKey = {
+  id: number;
+  name: string;
+  prefix: string;
+  rate_limit_per_minute: number;
+  created_at: string;
+  last_used_at: string | null;
+  expires_at: string | null;
+  revoked_at: string | null;
+  replaced_by_id: number | null;
+  created_by_name: string | null;
+  revoked_by_name: string | null;
+  state: "active" | "expiring" | "expired" | "revoked";
+};
+
+// Returned once, when a key is created or rotated.
+export type NewApiKey = ApiKey & { key: string };
 
 export type Postmortem = {
   status: "draft" | "published";

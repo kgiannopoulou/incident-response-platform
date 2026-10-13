@@ -10,6 +10,7 @@ import {
   type IncidentSeverity,
   type IncidentStatus,
 } from "@irp/shared";
+import { ALERT_SEVERITY_STYLE } from "@/components/alert-feed";
 import { Button, Card, cx, Empty, ErrorState, inputClass, Loading, SeverityBadge, ServiceStatusPill, StatusBadge } from "@/components/ui";
 import { post } from "@/lib/api";
 import { clock, dateTime, duration, timeAgo } from "@/lib/format";
@@ -279,14 +280,23 @@ export default function IncidentPage() {
             {alerts.length === 0 ? (
               <Empty>Declared manually — no alerts attached.</Empty>
             ) : (
-              <ul className="space-y-2 text-sm">
+              <ul className="space-y-3 text-sm">
                 {alerts.map((a) => (
                   <li key={a.id}>
-                    <p className="text-zinc-200">{a.summary}</p>
-                    <p className="text-xs text-zinc-500">
-                      {a.severity} · {a.source} · {clock(a.received_at)} ·{" "}
-                      <span className={a.status === "firing" ? "text-red-300" : "text-emerald-400"}>{a.status}</span>
+                    <p className="flex items-center gap-2 text-zinc-200">
+                      <span aria-hidden>{ALERT_SEVERITY_STYLE[a.severity].icon}</span>
+                      {a.title}
                     </p>
+                    {a.description && <p className="text-xs text-zinc-400">{a.description}</p>}
+                    <p className="text-xs text-zinc-500">
+                      {a.severity.toUpperCase()} · {a.source} · {clock(a.received_at)} ·{" "}
+                      <span className={a.status === "triggered" ? "text-red-300" : "text-emerald-400"}>{a.status}</span>
+                    </p>
+                    {Object.keys(a.metadata).length > 0 && (
+                      <p className="mt-0.5 truncate font-mono text-[11px] text-zinc-500" title={JSON.stringify(a.metadata)}>
+                        {JSON.stringify(a.metadata)}
+                      </p>
+                    )}
                   </li>
                 ))}
               </ul>

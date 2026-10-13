@@ -3,7 +3,7 @@
 // before each test, so tests exercise the real SQL, constraints and locks.
 import bcrypt from "bcryptjs";
 import pg from "pg";
-import { hashIntegrationKey } from "@irp/shared/dedup";
+import { apiKeyDisplayPrefix, hashApiKey } from "@irp/shared/crypto";
 import { createPool, databaseUrl, MIGRATIONS_DIR, runMigrations } from "./index";
 
 export function testDatabaseUrl() {
@@ -38,9 +38,9 @@ export async function setupTestDatabase() {
 
 export const TEST_PASSWORD = "test-password";
 export const TEST_KEYS = {
-  checkout: "test-key-checkout",
-  auth: "test-key-auth",
-  other: "test-key-other-org",
+  checkout: "ir_live_test_checkout",
+  auth: "ir_live_test_auth",
+  other: "ir_live_test_other_org",
 };
 
 export type Fixtures = Awaited<ReturnType<typeof resetFixtures>>;
@@ -48,16 +48,17 @@ export type Fixtures = Awaited<ReturnType<typeof resetFixtures>>;
 // Wipes every table and inserts a small, known world:
 //   org "acme": alex (admin), sam + jordan (responders), team Payments
 //     (alex, sam), policy L1 sam -> L2 alex (+1m) -> L3 team Payments (+1m)
-//     services: Checkout API (policy, auto_resolve, "suppress staging" rule)
-//               Auth Service (no policy)
-//   org "other": eve (admin), service Other API — for tenancy tests
+//     services: checkout-api (policy, auto_resolve, "suppress staging" rule)
+//               auth-service (no policy)
+//   org "other": eve (admin), service other-api — for tenancy tests
+//   Each service has one API key (TEST_KEYS), default rate limit.
 let passwordHash: string | undefined;
 export async function resetFixtures(pool: pg.Pool) {
   passwordHash ??= await bcrypt.hash(TEST_PASSWORD, 4);
   const q = async (sql: string, params: unknown[] = []) => (await pool.query(sql, params)).rows[0];
 
   await pool.query(`
-    TRUNCATE audit_log, postmortems, notifications, timeline_events, incident_responders,
+    TRUNCATE audit_log, api_keys, postmortems, notifications, timeline_events, incident_responders,
       incident_alerts, alerts, incidents, alert_rules, services, escalation_rules,
       escalation_policies, team_members, teams, organization_members, users, organizations
     RESTART IDENTITY CASCADE
@@ -97,17 +98,31 @@ export async function resetFixtures(pool: pg.Pool) {
     [policy.id, sam, alex, team.id]
   );
 
-  const service = async (orgId: number, name: string, key: string, policyId: number | null, autoResolve: boolean) =>
-    (
-      await q(
-        `INSERT INTO services (organization_id, name, integration_key_hash, escalation_policy_id, auto_resolve)
-         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-        [orgId, name, hashIntegrationKey(key), policyId, autoResolve]
-      )
-    ).id as number;
-  const checkout = await service(acme.id, "Checkout API", TEST_KEYS.checkout, policy.id, true);
-  const authService = await service(acme.id, "Auth Service", TEST_KEYS.auth, null, false);
-  const otherService = await service(other.id, "Other API", TEST_KEYS.other, null, false);
+  const keyIds: Record<string, number> = {};
+  const service = async (
+    orgId: number,
+    name: string,
+    slug: string,
+    key: keyof typeof TEST_KEYS,
+    policyId: number | null,
+    autoResolve: boolean
+  ) => {
+    const row = await q(
+      `INSERT INTO services (organization_id, name, slug, escalation_policy_id, auto_resolve)
+       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+      [orgId, name, slug, policyId, autoResolve]
+    );
+    const apiKey = await q(
+      `INSERT INTO api_keys (organization_id, service_id, name, prefix, key_hash)
+       VALUES ($1, $2, 'Test key', $3, $4) RETURNING id`,
+      [orgId, row.id, apiKeyDisplayPrefix(TEST_KEYS[key]), hashApiKey(TEST_KEYS[key])]
+    );
+    keyIds[key] = apiKey.id;
+    return row.id as number;
+  };
+  const checkout = await service(acme.id, "Checkout API", "checkout-api", "checkout", policy.id, true);
+  const authService = await service(acme.id, "Auth Service", "auth-service", "auth", null, false);
+  const otherService = await service(other.id, "Other API", "other-api", "other", null, false);
 
   await pool.query(
     `INSERT INTO alert_rules (service_id, position, name, conditions, action)
@@ -121,5 +136,6 @@ export async function resetFixtures(pool: pg.Pool) {
     teamId: team.id as number,
     policyId: policy.id as number,
     services: { checkout, auth: authService, other: otherService },
+    apiKeys: keyIds as Record<keyof typeof TEST_KEYS, number>,
   };
 }

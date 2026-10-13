@@ -15,6 +15,7 @@ import { servicesRouter } from "./routes/services";
 export function createApp(deps: Deps) {
   const app = express();
   app.disable("x-powered-by");
+  if (deps.trustProxy !== undefined) app.set("trust proxy", deps.trustProxy);
   app.use(cors({ origin: deps.webOrigin, credentials: true }));
   app.use(cookieParser());
   app.use(express.json({ limit: "256kb" }));

@@ -100,7 +100,7 @@ export function incidentsRouter(deps: Deps) {
 
     const [alerts, timeline, responders, notifications, postmortem] = await Promise.all([
       deps.pool.query(
-        `SELECT a.id, a.summary, a.severity, a.source, a.component, a.status, a.details, a.received_at, a.resolved_at
+        `SELECT a.public_id AS id, a.title, a.description, a.severity, a.source, a.status, a.metadata, a.received_at, a.resolved_at
          FROM alerts a JOIN incident_alerts ia ON ia.alert_id = a.id
          WHERE ia.incident_id = $1 ORDER BY a.received_at`,
         [incident.id]

@@ -2,15 +2,15 @@ import { describe, expect, it } from "vitest";
 import { evaluateRules, type AlertRule } from "../src/rules";
 
 const alert = (overrides = {}) => ({
-  severity: "error" as const,
+  severity: "high" as const,
   source: "prometheus:checkout-5xx",
-  summary: "Checkout API 5xx rate above 5%",
-  component: "checkout-api",
+  title: "Checkout API 5xx rate above 5%",
+  description: "Error rate reached 38% in eu-west-1",
   ...overrides,
 });
 
 describe("evaluateRules", () => {
-  it("defaults: critical/error open incidents with mapped severity", () => {
+  it("defaults: critical/high open incidents with mapped severity", () => {
     expect(evaluateRules(alert({ severity: "critical" }), [])).toMatchObject({
       action: "create_incident",
       severity: "sev1",
@@ -36,7 +36,7 @@ describe("evaluateRules", () => {
         id: 2,
         name: "Page on latency warnings",
         conditions: [
-          { field: "summary", op: "contains", value: "LATENCY" },
+          { field: "title", op: "contains", value: "LATENCY" },
           { field: "severity", op: "at_least", value: "warning" },
         ],
         action: "create_incident",
@@ -47,13 +47,21 @@ describe("evaluateRules", () => {
       action: "suppress",
       ruleId: 1,
     });
-    expect(evaluateRules(alert({ severity: "warning", summary: "p99 latency high" }), rules)).toMatchObject({
+    expect(evaluateRules(alert({ severity: "warning", title: "p99 latency high" }), rules)).toMatchObject({
       action: "create_incident",
       severity: "sev2",
       ruleId: 2,
     });
     // info is below "at_least warning", so it falls through to the default rule
-    expect(evaluateRules(alert({ severity: "info", summary: "latency" }), rules).action).toBe("record_only");
+    expect(evaluateRules(alert({ severity: "info", title: "latency" }), rules).action).toBe("record_only");
+  });
+
+  it("matches on the description too", () => {
+    const rules: AlertRule[] = [
+      { id: 3, name: "EU only", conditions: [{ field: "description", op: "contains", value: "eu-west" }], action: "suppress" },
+    ];
+    expect(evaluateRules(alert(), rules).action).toBe("suppress");
+    expect(evaluateRules(alert({ description: "us-east-1" }), rules).action).toBe("create_incident");
   });
 
   it("an empty condition list matches everything", () => {

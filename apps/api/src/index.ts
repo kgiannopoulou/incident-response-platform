@@ -4,6 +4,7 @@ import { createPool } from "@irp/database";
 import { QUEUES } from "@irp/shared";
 import { createApp } from "./app";
 import { env } from "./env";
+import { RateLimiter } from "./lib/rate-limit";
 import { RealtimeHub } from "./lib/realtime";
 
 const pool = createPool(env.databaseUrl);
@@ -15,15 +16,18 @@ const queues = {
   escalations: new Queue(QUEUES.escalations, { connection }),
 };
 const hub = new RealtimeHub(subscriber);
+const rateLimiter = new RateLimiter(redis, { authFailuresPerMinute: env.authFailuresPerMinute });
 
 const app = createApp({
   pool,
   redis,
   queues,
   hub,
+  rateLimiter,
   jwtSecret: env.jwtSecret,
   webOrigin: env.webOrigin,
   secureCookies: env.secureCookies,
+  trustProxy: env.trustProxy,
 });
 
 const server = app.listen(env.port, () => {
