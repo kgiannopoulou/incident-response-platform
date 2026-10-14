@@ -45,6 +45,8 @@ export type IncidentDetail = {
     escalation_policy_name: string | null;
     escalation_max_level: number | null;
     next_escalation_at: string | null;
+    ack_deadline_at: string | null;
+    ack_timed_out_at: string | null;
     mitigated_at: string | null;
     allowed_transitions: IncidentStatus[];
   };
@@ -157,6 +159,7 @@ export type EscalationPolicy = {
   id: number;
   name: string;
   description: string;
+  ackTimeoutMinutes: number | null;
   steps: {
     position: number;
     delayMinutes: number;

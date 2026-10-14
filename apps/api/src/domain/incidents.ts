@@ -1,5 +1,6 @@
 import { pageNextEscalationStep, queueWebhookEvent, type PoolClient } from "@irp/database";
 import {
+  ackTimeoutMinutesFor,
   type AlertSeverity,
   assertTransition,
   buildPostmortemDraft,
@@ -39,6 +40,8 @@ export type IncidentRow = {
   acknowledged_at: Date | null;
   mitigated_at: Date | null;
   resolved_at: Date | null;
+  ack_deadline_at: Date | null;
+  ack_timed_out_at: Date | null;
 };
 
 const changed = (fx: Effects, incident: IncidentRow, actor: Actor = null) =>
@@ -113,6 +116,39 @@ export async function recomputeServiceStatus(db: PoolClient, fx: Effects, servic
   }
 }
 
+// Keeps the acknowledgement timeout in line with the incident's severity:
+// a high-urgency (SEV1/SEV2), unacknowledged incident whose policy has a
+// timeout gets a deadline and a delayed job; one that drops to low urgency
+// loses it. The clock starts when the incident becomes high urgency (at
+// creation, or when an alert or a person raises the severity), and the
+// timeout fires at most once per incident.
+async function syncAckTimeout(db: PoolClient, fx: Effects, incident: IncidentRow) {
+  if (incident.status !== "triggered") return incident;
+  const { rows } = await db.query<{ ack_timeout_minutes: number | null }>(
+    `SELECT ep.ack_timeout_minutes FROM services s JOIN escalation_policies ep ON ep.id = s.escalation_policy_id
+     WHERE s.id = $1`,
+    [incident.service_id]
+  );
+  const minutes = ackTimeoutMinutesFor(incident.severity, rows[0]?.ack_timeout_minutes ?? null);
+  if (minutes && !incident.ack_deadline_at && !incident.ack_timed_out_at) {
+    const { rows: armed } = await db.query<IncidentRow>(
+      `UPDATE incidents SET ack_deadline_at = now() + make_interval(mins => $2) WHERE id = $1 RETURNING *`,
+      [incident.id, minutes]
+    );
+    fx.scheduleAckTimeout(incident.id, armed[0].ack_deadline_at!);
+    return armed[0];
+  }
+  if (!minutes && incident.ack_deadline_at) {
+    const { rows: disarmed } = await db.query<IncidentRow>(
+      `UPDATE incidents SET ack_deadline_at = NULL WHERE id = $1 RETURNING *`,
+      [incident.id]
+    );
+    fx.cancelAckTimeout(incident.id);
+    return disarmed[0];
+  }
+  return incident;
+}
+
 export type NewIncident = {
   organizationId: number;
   serviceId: number | null;
@@ -157,8 +193,8 @@ export async function createIncident(db: PoolClient, fx: Effects, input: NewInci
       input.actor?.id ?? null,
     ]
   );
-  const incident = rows[0];
-  if (!incident) return null;
+  if (!rows[0]) return null;
+  const incident = await syncAckTimeout(db, fx, rows[0]);
 
   if (input.actor) await addResponderRow(db, incident.id, input.actor.id, "commander");
   await addTimeline(db, fx, incident, "INCIDENT_CREATED", `Incident opened ${input.openedBy}`, input.actor, {
@@ -220,12 +256,14 @@ export async function changeStatus(
        mitigated_at = CASE WHEN $2 IN ('mitigated', 'resolved') THEN COALESCE(mitigated_at, now()) ELSE mitigated_at END,
        resolved_at = CASE WHEN $2 = 'resolved' THEN now() ELSE NULL END,
        next_escalation_at = NULL,
+       ack_deadline_at = NULL,
        commander_id = COALESCE(commander_id, $3)
      WHERE id = $1
      RETURNING *`,
     [incident.id, to, actor?.id ?? null]
   );
   const updated = rows[0];
+  if (incident.ack_deadline_at) fx.cancelAckTimeout(incident.id); // owned in time
 
   if (actor) {
     await addResponderRow(db, incident.id, actor.id, updated.commander_id === actor.id ? "commander" : "responder");
@@ -274,10 +312,11 @@ export async function changeSeverity(
   reason?: string
 ) {
   if (incident.severity === severity) return incident;
-  const { rows } = await db.query<IncidentRow>(`UPDATE incidents SET severity = $2 WHERE id = $1 RETURNING *`, [
+  const { rows: updatedRows } = await db.query<IncidentRow>(`UPDATE incidents SET severity = $2 WHERE id = $1 RETURNING *`, [
     incident.id,
     severity,
   ]);
+  const updated = await syncAckTimeout(db, fx, updatedRows[0]);
   await addTimeline(
     db,
     fx,
@@ -296,8 +335,8 @@ export async function changeSeverity(
     entityId: incident.id,
     details: { from: incident.severity, to: severity, reason: reason ?? null },
   });
-  changed(fx, rows[0], actor);
-  return rows[0];
+  changed(fx, updated, actor);
+  return updated;
 }
 
 // "Escalate" button: pages the next step of the service's escalation policy

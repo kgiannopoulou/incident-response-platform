@@ -161,6 +161,17 @@ export function IncidentHeader({ incident, busy: working, readOnly, error, act }
           {open && readOnly && (
             <span className="text-sm text-zinc-500">You&apos;re observing — join as a responder to act.</span>
           )}
+          {incident.ack_deadline_at && (
+            <span
+              className="rounded bg-red-500/15 px-2 py-0.5 text-xs font-medium text-red-200 ring-1 ring-red-500/40"
+              title="High-urgency incidents escalate early if nobody acknowledges them in time"
+            >
+              ⏰ Acknowledge {timeUntil(incident.ack_deadline_at, now)} or this {incident.severity.toUpperCase()} escalates early
+            </span>
+          )}
+          {incident.ack_timed_out_at && (
+            <span className="text-xs text-red-300">Acknowledgement timeout missed — escalated early</span>
+          )}
           {incident.next_escalation_at && (
             <span className="text-xs text-amber-300">
               Auto-escalates to L{incident.escalation_level + 1} {timeUntil(incident.next_escalation_at, now)} unless acknowledged

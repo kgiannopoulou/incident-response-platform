@@ -1,5 +1,6 @@
 import { deliverJobOptions, webhookJobOptions } from "@irp/shared";
 import type { WorkerContext } from "./context";
+import { handleAckTimeout } from "./ack-timeout";
 import { escalateIncident } from "./escalation";
 
 // Safety net that makes Postgres — not Redis — the source of truth.
@@ -24,6 +25,20 @@ export async function sweep(ctx: WorkerContext) {
     }
   }
 
+  // Acknowledgement deadlines that passed without their delayed job running.
+  const { rows: lateAcks } = await ctx.pool.query<{ id: number }>(
+    `SELECT id FROM incidents WHERE ack_deadline_at IS NOT NULL AND ack_deadline_at <= now()
+     ORDER BY ack_deadline_at LIMIT 100`
+  );
+  let ackTimeouts = 0;
+  for (const { id } of lateAcks) {
+    try {
+      if ((await handleAckTimeout(ctx, id)).timedOut) ackTimeouts++;
+    } catch (err) {
+      console.error(`Sweep: acknowledgement timeout for incident ${id} failed`, err);
+    }
+  }
+
   // Notifications still queued well after creation: (re-)enqueue. The job
   // id dedups against a job that is in fact still waiting in the queue.
   const { rows: stuck } = await ctx.pool.query<{ id: number }>(
@@ -45,5 +60,5 @@ export async function sweep(ctx: WorkerContext) {
   for (const { id } of stuckHooks) {
     await ctx.webhooksQueue.add("deliver-webhook", { deliveryId: id }, webhookJobOptions(id));
   }
-  return { escalated, requeued: stuck.length + stuckHooks.length };
+  return { escalated, ackTimeouts, requeued: stuck.length + stuckHooks.length };
 }

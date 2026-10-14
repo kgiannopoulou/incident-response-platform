@@ -16,6 +16,7 @@ type Stats = {
   incidents_30d: number;
   mtta_seconds: number | null;
   mttr_seconds: number | null;
+  ack_timeouts_30d: number;
 };
 
 function Stat({ label, value, alert }: { label: string; value: string | number; alert?: boolean }) {
@@ -48,12 +49,13 @@ export default function DashboardPage() {
       {stats.error ? (
         <ErrorState message={stats.error} onRetry={stats.reload} />
       ) : (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
           <Stat label="Open incidents" value={s?.open_incidents ?? "—"} alert={!!s?.open_incidents} />
           <Stat label="Unacknowledged" value={s?.unacknowledged ?? "—"} alert={!!s?.unacknowledged} />
           <Stat label="Incidents (30d)" value={s?.incidents_30d ?? "—"} />
           <Stat label="MTTA (30d)" value={duration(s?.mtta_seconds)} />
           <Stat label="MTTR (30d)" value={duration(s?.mttr_seconds)} />
+          <Stat label="Missed ack timeouts (30d)" value={s?.ack_timeouts_30d ?? "—"} alert={!!s?.ack_timeouts_30d} />
         </div>
       )}
 

@@ -81,6 +81,12 @@ Monitoring tool / app ──POST /api/v1/alerts──► API key (hashed lookup)
   anchored to when the incident triggered. Full CRUD API with validation (strictly increasing delays,
   same-organization targets) and an editor that draws the chain; acknowledging stops it, *Escalate*
   pages the next step immediately.
+- **Acknowledgement timeout** — a fast lane for high-urgency incidents: if nobody acknowledges a
+  SEV1/SEV2 within the policy's timeout, a delayed BullMQ job pages the next step *now* instead of at
+  its scheduled time. Acknowledging clears the deadline and cancels the job; a severity raise starts
+  the clock, a downgrade stops it; the sweeper catches deadlines whose job was lost. A live
+  "Acknowledge in 1 min or this SEV1 escalates early" countdown, an `ACK_TIMEOUT` timeline event, an
+  `incident.escalated` webhook, and a *missed ack timeouts* KPI on the dashboard.
 - **Background jobs on Redis + BullMQ** — the API saves the incident and queues an
   `incident-created` job instead of paging inside the request; the worker pages and schedules the
   next step as a delayed job. Per-queue retry policies with exponential backoff, a **dead-letter
@@ -208,8 +214,9 @@ npm run simulate -- recover     # monitoring clears the alerts → Checkout auto
 ```
 
 Watch the dashboard update live, see the Payments team (Sam, Jordan) paged by email in the Mailpit
-inbox (http://localhost:8025), wait
-two minutes without acknowledging to watch it escalate to Alex (and at five minutes to Riley), then acknowledge, add notes, resolve, and open the
+inbox (http://localhost:8025), and leave the SEV1 unacknowledged: after two minutes its
+acknowledgement timeout fires and pages Alex early (step 2 would otherwise wait until minute 5),
+and at minute ten Riley is paged. Then then acknowledge, add notes, resolve, and open the
 generated postmortem.
 
 Sending an alert from anything that speaks HTTP (the seeded `checkout-api` service's dev key):
@@ -306,7 +313,11 @@ npm run lint
   retry resets the row and re-enqueues; tenant-scoped; audited), worker heartbeats and the retry
   policy, **notifications** (webhook fan-out only to enabled, subscribed endpoints of the right
   tenant; signatures verified by a real local receiver; non-2xx retried then failed; `410` disables;
-  SSRF guard; secrets returned once and never listed; email subject and links).
+  SSRF guard; secrets returned once and never listed; email subject and links), the
+  **acknowledgement timeout** (armed only for high-urgency incidents of policies with a timeout;
+  acknowledging cancels the delayed job; severity raise/lower arms/disarms; fires once even with job +
+  sweeper racing; pages the next step early while the regular schedule continues; recovered by the
+  sweeper after Redis loses the job).
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs typecheck, lint, all tests
 against Postgres/Redis service containers, the web production build, and the Docker image build.

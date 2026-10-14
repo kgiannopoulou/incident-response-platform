@@ -5,6 +5,7 @@
 //
 //   API ── save incident (COMMIT) ──► escalations: "incident-created" { incidentId }
 //                                          │  worker pages step 1, schedules step 2 (delayed job)
+//                                          │  + "ack-timeout" (delayed, cancelled on acknowledge)
 //                                          ▼
 //                                     notifications: "deliver" { notificationId }   (email)
 //                                     webhooks: "deliver-webhook" { deliveryId }      (signed POST)
@@ -86,6 +87,15 @@ export function webhookJobOptions(deliveryId: number) {
     removeOnComplete: true,
     removeOnFail: true,
   };
+}
+
+// One pending acknowledgement-timeout job per incident. The fixed id lets
+// the API cancel it when someone acknowledges (queue.remove) and makes
+// scheduling it twice harmless.
+export const ackTimeoutJobId = (incidentId: number) => `ack-timeout-${incidentId}`;
+
+export function ackTimeoutJobOptions(incidentId: number, delay: number) {
+  return { jobId: ackTimeoutJobId(incidentId), delay, ...RETRY_POLICY.escalations, removeOnComplete: true, removeOnFail: true };
 }
 
 // Options for escalation jobs. `delay` schedules the next step.

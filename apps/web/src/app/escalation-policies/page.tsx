@@ -10,42 +10,49 @@ import type { EscalationPolicy } from "@/lib/types";
 
 type Person = { id: number; name: string };
 type DraftStep = { delayMinutes: number; targets: { targetType: EscalationTargetType; targetId: number }[] };
-type Draft = { id: number | null; name: string; description: string; steps: DraftStep[] };
+type Draft = { id: number | null; name: string; description: string; ackTimeoutMinutes: number | null; steps: DraftStep[] };
 
-const EMPTY_DRAFT: Draft = { id: null, name: "", description: "", steps: [{ delayMinutes: 0, targets: [] }] };
+const EMPTY_DRAFT: Draft = { id: null, name: "", description: "", ackTimeoutMinutes: 5, steps: [{ delayMinutes: 0, targets: [] }] };
 
 // One policy drawn as the chain responders think in:
 //   0 min ↓ Notify Backend Team ↓ 5 min without acknowledgement ↓ Notify Team Lead
 function PolicyChain({ policy }: { policy: EscalationPolicy }) {
   return (
-    <ol className="space-y-1">
-      {policy.steps.map((step, i) => (
-        <Fragment key={step.position}>
-          {i > 0 && <li aria-hidden className="pl-[4.25rem] text-zinc-600">↓</li>}
-          <li className="flex items-start gap-3">
-            <span className="w-14 shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 text-center font-mono text-xs text-zinc-300">
-              {step.delayMinutes} min
-            </span>
-            <div>
-              <p className="text-xs text-zinc-500">
-                L{step.position} · {describeEscalationDelay(step.delayMinutes)}
-              </p>
-              <p className="text-sm text-zinc-100">
-                Notify{" "}
-                {step.targets.map((t, j) => (
-                  <Fragment key={`${t.targetType}-${t.targetId}`}>
-                    {j > 0 && ", "}
-                    <span className={t.targetType === "team" ? "text-sky-300" : undefined}>
-                      {t.targetType === "team" ? `${t.name} team` : t.name}
-                    </span>
-                  </Fragment>
-                ))}
-              </p>
-            </div>
-          </li>
-        </Fragment>
-      ))}
-    </ol>
+    <>
+      {policy.ackTimeoutMinutes && (
+        <p className="mb-3 rounded bg-red-500/10 px-2 py-1.5 text-xs text-red-200 ring-1 ring-red-500/30">
+          ⏰ SEV1/SEV2 not acknowledged within {policy.ackTimeoutMinutes} min → next step is paged immediately
+        </p>
+      )}
+      <ol className="space-y-1">
+        {policy.steps.map((step, i) => (
+          <Fragment key={step.position}>
+            {i > 0 && <li aria-hidden className="pl-[4.25rem] text-zinc-600">↓</li>}
+            <li className="flex items-start gap-3">
+              <span className="w-14 shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 text-center font-mono text-xs text-zinc-300">
+                {step.delayMinutes} min
+              </span>
+              <div>
+                <p className="text-xs text-zinc-500">
+                  L{step.position} · {describeEscalationDelay(step.delayMinutes)}
+                </p>
+                <p className="text-sm text-zinc-100">
+                  Notify{" "}
+                  {step.targets.map((t, j) => (
+                    <Fragment key={`${t.targetType}-${t.targetId}`}>
+                      {j > 0 && ", "}
+                      <span className={t.targetType === "team" ? "text-sky-300" : undefined}>
+                        {t.targetType === "team" ? `${t.name} team` : t.name}
+                      </span>
+                    </Fragment>
+                  ))}
+                </p>
+              </div>
+            </li>
+          </Fragment>
+        ))}
+      </ol>
+    </>
   );
 }
 
@@ -76,7 +83,7 @@ function PolicyEditor({
     setError(null);
     setSaving(true);
     try {
-      const body = { name: draft.name, description: draft.description, steps: draft.steps };
+      const body = { name: draft.name, description: draft.description, ackTimeoutMinutes: draft.ackTimeoutMinutes, steps: draft.steps };
       if (draft.id) await put(`/escalation-policies/${draft.id}`, body);
       else await post("/escalation-policies", body);
       onSaved();
@@ -92,6 +99,26 @@ function PolicyEditor({
       {error && <ErrorState message={error} />}
       <input className={inputClass} placeholder="Policy name, e.g. Checkout escalation" value={draft.name} required minLength={2} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
       <input className={inputClass} placeholder="Description (optional)" value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
+
+      <label className="flex flex-wrap items-center gap-2 text-sm text-zinc-300">
+        <input
+          type="checkbox"
+          checked={draft.ackTimeoutMinutes !== null}
+          onChange={(e) => setDraft({ ...draft, ackTimeoutMinutes: e.target.checked ? 5 : null })}
+        />
+        Acknowledgement timeout: escalate SEV1/SEV2 early if not acknowledged within
+        <input
+          type="number"
+          min={1}
+          max={1440}
+          aria-label="Acknowledgement timeout in minutes"
+          disabled={draft.ackTimeoutMinutes === null}
+          className={`${inputClass} w-20`}
+          value={draft.ackTimeoutMinutes ?? ""}
+          onChange={(e) => setDraft({ ...draft, ackTimeoutMinutes: Number(e.target.value) })}
+        />
+        min
+      </label>
 
       <ol className="space-y-3">
         {draft.steps.map((step, i) => (
@@ -199,6 +226,7 @@ export default function EscalationPoliciesPage() {
       id: p.id,
       name: p.name,
       description: p.description,
+      ackTimeoutMinutes: p.ackTimeoutMinutes,
       steps: p.steps.map((s) => ({ delayMinutes: s.delayMinutes, targets: s.targets.map(({ targetType, targetId }) => ({ targetType, targetId })) })),
     });
 

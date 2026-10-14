@@ -1,5 +1,12 @@
 import { withTransaction, type PoolClient } from "@irp/database";
-import { deliverJobOptions, escalateJobOptions, webhookJobOptions, type RealtimeEvent } from "@irp/shared";
+import {
+  ackTimeoutJobId,
+  ackTimeoutJobOptions,
+  deliverJobOptions,
+  escalateJobOptions,
+  webhookJobOptions,
+  type RealtimeEvent,
+} from "@irp/shared";
 import { publishRealtime } from "@irp/shared/realtime";
 import type { Deps } from "../deps";
 
@@ -18,6 +25,8 @@ export class Effects {
   private notificationIds: number[] = [];
   private webhookDeliveryIds: number[] = [];
   private escalations: { incidentId: number; name: string }[] = [];
+  private ackTimeouts: { incidentId: number; at: Date }[] = [];
+  private cancelledAckTimeouts: number[] = [];
 
   publish(organizationId: number, event: RealtimeEvent) {
     this.events.push({ organizationId, event });
@@ -37,6 +46,19 @@ export class Effects {
     this.escalations.push({ incidentId, name });
   }
 
+  // Delayed job that fires when an unacknowledged high-urgency incident's
+  // acknowledgement deadline passes.
+  scheduleAckTimeout(incidentId: number, at: Date) {
+    this.ackTimeouts.push({ incidentId, at });
+  }
+
+  // Acknowledged in time: drop the pending job. Best effort — the worker
+  // re-checks the incident anyway, so a job that can't be removed (already
+  // running) finds nothing to do.
+  cancelAckTimeout(incidentId: number) {
+    this.cancelledAckTimeouts.push(incidentId);
+  }
+
   async flush(deps: Pick<Deps, "redis" | "queues">) {
     try {
       for (const { organizationId, event } of this.events) {
@@ -50,6 +72,13 @@ export class Effects {
       }
       for (const { incidentId, name } of this.escalations) {
         await deps.queues.escalations.add(name, { incidentId }, escalateJobOptions());
+      }
+      for (const { incidentId, at } of this.ackTimeouts) {
+        const delay = Math.max(0, at.getTime() - Date.now());
+        await deps.queues.escalations.add("ack-timeout", { incidentId }, ackTimeoutJobOptions(incidentId, delay));
+      }
+      for (const incidentId of this.cancelledAckTimeouts) {
+        await deps.queues.escalations.remove(ackTimeoutJobId(incidentId)).catch(() => 0);
       }
     } catch (err) {
       console.error("Post-commit side effects failed; the worker sweeper will recover:", err);

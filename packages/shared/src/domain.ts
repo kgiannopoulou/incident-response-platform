@@ -77,6 +77,7 @@ export const TIMELINE_EVENT_TYPES = [
   "ALERT_RESOLVED",
   "NOTIFICATION_SENT", // a responder was paged (escalation level 1)
   "INCIDENT_ESCALATED", // a later escalation level was paged, automatically or by hand
+  "ACK_TIMEOUT", // nobody acknowledged a high-urgency incident in time; the next step was paged early
   "INCIDENT_ACKNOWLEDGED",
   "STATUS_CHANGED",
   "SEVERITY_CHANGED",

@@ -56,7 +56,9 @@ export function orgRouter(deps: Deps) {
          round(avg(extract(epoch FROM acknowledged_at - triggered_at))
                FILTER (WHERE triggered_at > now() - interval '30 days'))::int AS mtta_seconds,
          round(avg(extract(epoch FROM resolved_at - triggered_at))
-               FILTER (WHERE triggered_at > now() - interval '30 days'))::int AS mttr_seconds
+               FILTER (WHERE triggered_at > now() - interval '30 days'))::int AS mttr_seconds,
+         count(*) FILTER (WHERE ack_timed_out_at IS NOT NULL
+                          AND triggered_at > now() - interval '30 days')::int AS ack_timeouts_30d
        FROM incidents WHERE organization_id = $1`,
       [req.user!.organizationId]
     );

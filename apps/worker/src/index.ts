@@ -2,6 +2,7 @@ import { Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import { createPool } from "@irp/database";
 import { QUEUES, type DeliverNotificationJob, type DeliverWebhookJob, type EscalateIncidentJob } from "@irp/shared";
+import { handleAckTimeout } from "./ack-timeout";
 import { createEmailSender, type WorkerContext } from "./context";
 import { handleFailures } from "./dead-letter";
 import { deliverNotification } from "./delivery";
@@ -38,7 +39,10 @@ const notifications = new Worker<DeliverNotificationJob>(
 
 const escalations = new Worker<EscalateIncidentJob>(
   QUEUES.escalations,
-  async (job) => escalateIncident(ctx, job.data.incidentId),
+  // "incident-created" and "escalate" walk the policy's steps; "ack-timeout"
+  // is the delayed acknowledgement deadline of a high-urgency incident.
+  async (job) =>
+    job.name === "ack-timeout" ? handleAckTimeout(ctx, job.data.incidentId) : escalateIncident(ctx, job.data.incidentId),
   { connection, concurrency: 5 }
 );
 
@@ -61,7 +65,9 @@ const sweepTimer = setInterval(async () => {
   sweeping = true;
   try {
     const result = await sweep(ctx);
-    if (result.escalated || result.requeued) console.log(`[sweep] escalated ${result.escalated}, requeued ${result.requeued}`);
+    if (result.escalated || result.ackTimeouts || result.requeued) {
+      console.log(`[sweep] escalated ${result.escalated}, ack timeouts ${result.ackTimeouts}, requeued ${result.requeued}`);
+    }
   } catch (err) {
     console.error("[sweep] failed:", err);
   } finally {

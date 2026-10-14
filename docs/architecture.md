@@ -317,6 +317,42 @@ Checkout escalation                       escalation_policies
   notification rows, advances `escalation_level` and schedules the following step.
 - A policy can't be deleted while a service uses it (`409` naming the services).
 
+## Acknowledgement timeout
+
+```
+Incident created (SEV1)
+      │  ack_deadline_at = now + 5 min      escalations.add("ack-timeout", { incidentId },
+      ▼                                                     { jobId: "ack-timeout-<id>", delay: 5 min })
+ wait 5 minutes
+      │
+      ▼
+ acknowledged? ── yes ──► changeStatus() clears ack_deadline_at; after COMMIT the API removes the job
+      │ no
+      ▼
+ worker: ACK_TIMEOUT on the timeline, page the next step now, webhook incident.escalated
+```
+
+Escalation steps are the *regular* schedule; the acknowledgement timeout is a *fast lane* for
+high-urgency incidents. With steps at 0 / 10 / 20 minutes and a 5-minute timeout, an unowned SEV1
+pages step 2 at minute 5; step 3 still follows at minute 20. Low-urgency incidents (SEV3/SEV4) only
+follow the steps.
+
+- **Why a delayed job here.** "Do X in 5 minutes unless Y happens first" is exactly what delayed jobs
+  are for. The job has a deterministic id (`ack-timeout-<incidentId>`), so scheduling it twice is a no-op
+  and acknowledging can cancel it with `queue.remove(id)` — after COMMIT, so a rolled-back
+  acknowledgement never cancels anything.
+- **Cancellation is an optimisation, not the guarantee.** A job that's already running can't be
+  removed; `handleAckTimeout()` row-locks the incident and acts only if it is still `triggered` with a
+  deadline in the past, clearing the deadline as it acts. So a late or duplicate job, or the sweeper
+  racing the job, does nothing (tested with all three at once).
+- **Postgres stays the source of truth.** `ack_deadline_at` is on the incident; the sweeper handles
+  overdue deadlines whose job Redis lost.
+- **Severity changes move the clock.** A SEV3 raised to SEV1 (by a correlated CRITICAL alert or a
+  person) gets a deadline from that moment; a SEV1 lowered to SEV3 loses it. The timeout fires at most
+  once per incident (`ack_timed_out_at`), after which the regular steps take over.
+- It's measurable: missed timeouts count on the dashboard, and the postmortem's escalation count and
+  "review on-call coverage" action item pick them up from the timeline.
+
 ## Postgres as the source of truth for paging
 
 A queue is a great trigger and a poor ledger. So:

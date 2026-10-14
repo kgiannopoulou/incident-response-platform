@@ -140,15 +140,19 @@ stores a SHA-256 hash and a display prefix (`ir_live_a8f83e7c`).
 | --- | --- | --- | --- |
 | GET | `/escalation-policies` | — | Every policy with its ordered `steps` (`position`, `delayMinutes`, `targets[{ targetType, targetId, name }]`) and the `services` using it |
 | GET | `/escalation-policies/:id` | — | One policy |
-| POST | `/escalation-policies` | `{ name, description?, steps: [{ delayMinutes, targets: [{ targetType: "user" \| "team", targetId }] }] }` | Admin. 1–10 steps, delays strictly increasing (0–1440), 1–10 targets per step, no duplicates; targets must be in your organization. `409` on a duplicate name |
+| POST | `/escalation-policies` | `{ name, description?, ackTimeoutMinutes?, steps: [{ delayMinutes, targets: [{ targetType: "user" \| "team", targetId }] }] }` | Admin. 1–10 steps, delays strictly increasing (0–1440), 1–10 targets per step, no duplicates; targets must be in your organization. `409` on a duplicate name |
 | PUT | `/escalation-policies/:id` | same as POST | Admin. Replaces name, description and **all** steps in one transaction |
 | DELETE | `/escalation-policies/:id` | — | Admin. `409` while a service still uses the policy |
 
-`delayMinutes` counts from when the incident **triggered**, not from the previous step:
+`delayMinutes` counts from when the incident **triggered**, not from the previous step.
+`ackTimeoutMinutes` (1–1440 or `null`) is the acknowledgement timeout: a SEV1/SEV2 incident not
+acknowledged within it gets its next step paged immediately. Incidents expose the pending deadline as
+`ack_deadline_at` and a missed one as `ack_timed_out_at`; `/stats` counts `ack_timeouts_30d`.
 
 ```json
 {
   "name": "Checkout escalation",
+  "ackTimeoutMinutes": 5,
   "steps": [
     { "delayMinutes": 0,  "targets": [{ "targetType": "team", "targetId": 1 }] },
     { "delayMinutes": 5,  "targets": [{ "targetType": "user", "targetId": 2 }] },

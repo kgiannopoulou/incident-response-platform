@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { IncidentSeverity } from "./domain";
 
 // Escalation policies: who gets paged, and when, while nobody acknowledges.
 //
@@ -33,6 +34,8 @@ export const escalationPolicySchema = z
   .object({
     name: z.string().trim().min(2).max(100),
     description: z.string().trim().max(500).default(""),
+    // Acknowledgement timeout for high-urgency incidents; null = none.
+    ackTimeoutMinutes: z.number().int().min(1).max(MAX_ESCALATION_DELAY_MINUTES).nullable().default(null),
     steps: z.array(escalationStepSchema).min(1, "a policy needs at least one step").max(MAX_ESCALATION_STEPS),
   })
   .superRefine((policy, ctx) => {
@@ -56,6 +59,21 @@ export const escalationPolicySchema = z
     });
   });
 export type EscalationPolicyInput = z.infer<typeof escalationPolicySchema>;
+
+// ---------------------------------------------------------------------------
+// Acknowledgement timeout
+// ---------------------------------------------------------------------------
+
+// SEV1 and SEV2 are high urgency: somebody must own them quickly, so the
+// policy's acknowledgement timeout applies. SEV3 / SEV4 follow the steps only.
+export const HIGH_URGENCY_SEVERITIES: readonly IncidentSeverity[] = ["sev1", "sev2"];
+export const isHighUrgency = (severity: IncidentSeverity) => HIGH_URGENCY_SEVERITIES.includes(severity);
+
+// Minutes until an unacknowledged incident of this severity is escalated
+// early, or null when no timeout applies.
+export function ackTimeoutMinutesFor(severity: IncidentSeverity, policyAckTimeoutMinutes: number | null) {
+  return policyAckTimeoutMinutes && isHighUrgency(severity) ? policyAckTimeoutMinutes : null;
+}
 
 // The minimum a scheduler needs to know about a step.
 export type EscalationStepTiming = { position: number; delayMinutes: number };

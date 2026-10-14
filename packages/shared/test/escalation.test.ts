@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { describeEscalationDelay, escalationDueAt, escalationPolicySchema, nextEscalationStep } from "../src/escalation";
+import {
+  ackTimeoutMinutesFor,
+  describeEscalationDelay,
+  escalationDueAt,
+  escalationPolicySchema,
+  isHighUrgency,
+  nextEscalationStep,
+} from "../src/escalation";
 
 const team = (id: number) => ({ targetType: "team" as const, targetId: id });
 const user = (id: number) => ({ targetType: "user" as const, targetId: id });
@@ -70,5 +77,23 @@ describe("scheduling", () => {
     expect(describeEscalationDelay(0)).toBe("Immediately");
     expect(describeEscalationDelay(5)).toBe("5 min without acknowledgement");
     expect(describeEscalationDelay(90)).toBe("1 h 30 min without acknowledgement");
+  });
+});
+
+describe("acknowledgement timeout", () => {
+  it("applies only to high-urgency incidents of a policy that has one", () => {
+    expect(isHighUrgency("sev1")).toBe(true);
+    expect(isHighUrgency("sev2")).toBe(true);
+    expect(isHighUrgency("sev3")).toBe(false);
+    expect(ackTimeoutMinutesFor("sev1", 5)).toBe(5);
+    expect(ackTimeoutMinutesFor("sev4", 5)).toBeNull();
+    expect(ackTimeoutMinutesFor("sev1", null)).toBeNull();
+  });
+
+  it("is optional on a policy and bounded", () => {
+    const base = { name: "On-call", steps: [{ delayMinutes: 0, targets: [user(1)] }] };
+    expect(escalationPolicySchema.parse(base).ackTimeoutMinutes).toBeNull();
+    expect(escalationPolicySchema.parse({ ...base, ackTimeoutMinutes: 5 }).ackTimeoutMinutes).toBe(5);
+    expect(escalationPolicySchema.safeParse({ ...base, ackTimeoutMinutes: 0 }).success).toBe(false);
   });
 });

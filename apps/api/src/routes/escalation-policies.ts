@@ -24,7 +24,7 @@ type Db = Pick<PoolClient, "query">;
 
 async function loadPolicies(db: Db, organizationId: number, policyId: number | null = null) {
   const { rows } = await db.query(
-    `SELECT p.id, p.name, p.description, p.created_at, p.updated_at,
+    `SELECT p.id, p.name, p.description, p.ack_timeout_minutes AS "ackTimeoutMinutes", p.created_at, p.updated_at,
        COALESCE((
          SELECT json_agg(json_build_object(
            'position', s.position,
@@ -84,6 +84,7 @@ async function writeSteps(db: Db, policyId: number, policy: EscalationPolicyInpu
 
 const summary = (policy: EscalationPolicyInput) => ({
   name: policy.name,
+  ackTimeoutMinutes: policy.ackTimeoutMinutes,
   steps: policy.steps.map((s) => ({ delayMinutes: s.delayMinutes, targets: s.targets.length })),
 });
 
@@ -106,9 +107,9 @@ export function escalationPoliciesRouter(deps: Deps) {
     const policy = await runTx(deps, async (db) => {
       await assertTargetsInOrg(db, orgId, data);
       const { rows } = await db.query<{ id: number }>(
-        `INSERT INTO escalation_policies (organization_id, name, description) VALUES ($1, $2, $3)
+        `INSERT INTO escalation_policies (organization_id, name, description, ack_timeout_minutes) VALUES ($1, $2, $3, $4)
          ON CONFLICT (organization_id, name) DO NOTHING RETURNING id`,
-        [orgId, data.name, data.description]
+        [orgId, data.name, data.description, data.ackTimeoutMinutes]
       );
       if (!rows[0]) throw new HttpError(409, `An escalation policy named "${data.name}" already exists`);
       await writeSteps(db, rows[0].id, data);
@@ -141,11 +142,10 @@ export function escalationPoliciesRouter(deps: Deps) {
         [orgId, data.name, id]
       );
       if (clash[0]) throw new HttpError(409, `An escalation policy named "${data.name}" already exists`);
-      await db.query(`UPDATE escalation_policies SET name = $2, description = $3, updated_at = now() WHERE id = $1`, [
-        id,
-        data.name,
-        data.description,
-      ]);
+      await db.query(
+        `UPDATE escalation_policies SET name = $2, description = $3, ack_timeout_minutes = $4, updated_at = now() WHERE id = $1`,
+        [id, data.name, data.description, data.ackTimeoutMinutes]
+      );
       await writeSteps(db, id, data);
       await audit(db, {
         organizationId: orgId,

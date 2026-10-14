@@ -74,13 +74,20 @@ async function main() {
     const payments = await team("Payments", [users.sam, users.jordan]);
     const platform = await team("Platform", [users.jordan, users.alex]);
 
-    // Delays are minutes since the incident triggered. They're short so
-    // escalation is visible in a demo; a real policy would use 5 / 10 / 15.
+    // Delays are minutes since the incident triggered. The checkout policy
+    // is the plan's 0 / 5 / 10, plus a 2-minute acknowledgement timeout for
+    // SEV1/SEV2 so the fast lane is visible in a demo.
     type Target = { user?: number; team?: number };
-    const policy = async (name: string, description: string, steps: { delay: number; targets: Target[] }[]) => {
+    const policy = async (
+      name: string,
+      description: string,
+      ackTimeoutMinutes: number | null,
+      steps: { delay: number; targets: Target[] }[]
+    ) => {
       const { rows } = await db.query(
-        `INSERT INTO escalation_policies (organization_id, name, description) VALUES ($1, $2, $3) RETURNING id`,
-        [org.id, name, description]
+        `INSERT INTO escalation_policies (organization_id, name, description, ack_timeout_minutes)
+         VALUES ($1, $2, $3, $4) RETURNING id`,
+        [org.id, name, description, ackTimeoutMinutes]
       );
       for (const [i, step] of steps.entries()) {
         const { rows: stepRows } = await db.query(
@@ -96,12 +103,12 @@ async function main() {
       }
       return rows[0].id as number;
     };
-    const paymentsPolicy = await policy("Checkout escalation", "Payments team first, then the team lead, then engineering management", [
+    const paymentsPolicy = await policy("Checkout escalation", "Payments team first, then the team lead, then engineering management", 2, [
       { delay: 0, targets: [{ team: payments }] },
-      { delay: 2, targets: [{ user: users.alex }] },
-      { delay: 5, targets: [{ user: users.riley }] },
+      { delay: 5, targets: [{ user: users.alex }] },
+      { delay: 10, targets: [{ user: users.riley }] },
     ]);
-    const platformPolicy = await policy("Platform on-call", "Platform engineer on call, then the team lead", [
+    const platformPolicy = await policy("Platform on-call", "Platform engineer on call, then the team lead", null, [
       { delay: 0, targets: [{ user: users.jordan }] },
       { delay: 3, targets: [{ user: users.alex }] },
     ]);

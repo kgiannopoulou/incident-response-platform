@@ -22,6 +22,7 @@ const ICON: Record<string, string> = {
   ALERT_RESOLVED: "✅",
   NOTIFICATION_SENT: "📟",
   INCIDENT_ESCALATED: "⏫",
+  ACK_TIMEOUT: "⏰",
   INCIDENT_ACKNOWLEDGED: "👤",
   SEVERITY_CHANGED: "🎚️",
   RESPONDER_ADDED: "🙋",
