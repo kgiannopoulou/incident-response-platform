@@ -23,6 +23,7 @@ export async function createTestContext() {
   const queues = {
     notifications: new Queue(QUEUES.notifications, { connection }),
     escalations: new Queue(QUEUES.escalations, { connection }),
+    webhooks: new Queue(QUEUES.webhooks, { connection }),
     deadLetter: new Queue(QUEUES.deadLetter, { connection }),
   };
   const hub = new RealtimeHub(

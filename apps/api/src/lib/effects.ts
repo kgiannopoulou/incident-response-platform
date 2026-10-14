@@ -1,5 +1,5 @@
 import { withTransaction, type PoolClient } from "@irp/database";
-import { deliverJobOptions, escalateJobOptions, type RealtimeEvent } from "@irp/shared";
+import { deliverJobOptions, escalateJobOptions, webhookJobOptions, type RealtimeEvent } from "@irp/shared";
 import { publishRealtime } from "@irp/shared/realtime";
 import type { Deps } from "../deps";
 
@@ -10,12 +10,13 @@ import type { Deps } from "../deps";
 // is published, so browsers and the worker never see a change that didn't
 // happen.
 //
-// If flush itself fails (Redis down), nothing is lost: notifications are
-// already rows with status 'queued' and escalations are driven by
+// If flush itself fails (Redis down), nothing is lost: notifications and
+// webhook deliveries are already rows with status 'queued' and escalations are driven by
 // incidents.next_escalation_at — the worker's sweeper picks both up.
 export class Effects {
   private events: { organizationId: number; event: RealtimeEvent }[] = [];
   private notificationIds: number[] = [];
+  private webhookDeliveryIds: number[] = [];
   private escalations: { incidentId: number; name: string }[] = [];
 
   publish(organizationId: number, event: RealtimeEvent) {
@@ -24,6 +25,10 @@ export class Effects {
 
   deliverNotification(notificationId: number) {
     this.notificationIds.push(notificationId);
+  }
+
+  deliverWebhooks(deliveryIds: number[]) {
+    this.webhookDeliveryIds.push(...deliveryIds);
   }
 
   // "incident-created" for a brand-new incident (the worker pages step 1),
@@ -39,6 +44,9 @@ export class Effects {
       }
       for (const id of this.notificationIds) {
         await deps.queues.notifications.add("deliver", { notificationId: id }, deliverJobOptions(id));
+      }
+      for (const id of this.webhookDeliveryIds) {
+        await deps.queues.webhooks.add("deliver-webhook", { deliveryId: id }, webhookJobOptions(id));
       }
       for (const { incidentId, name } of this.escalations) {
         await deps.queues.escalations.add(name, { incidentId }, escalateJobOptions());

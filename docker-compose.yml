@@ -27,6 +27,14 @@ services:
       interval: 5s
       retries: 10
 
+  # Catches every email the worker sends (pages). Inbox: http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:v1.27
+    restart: unless-stopped
+    ports:
+      - "1025:1025" # SMTP
+      - "8025:8025" # web inbox
+
   # --- Full stack in containers: `docker compose --profile app up --build` ---
   # (For development, run only postgres + redis and start the apps with npm.)
   migrate:
@@ -38,7 +46,8 @@ services:
       REDIS_URL: redis://redis:6379
       JWT_SECRET: ${JWT_SECRET:-docker-demo-secret-change-me}
       WEB_ORIGIN: http://localhost:3000
-      NOTIFY_WEBHOOK_URL: ${NOTIFY_WEBHOOK_URL:-}
+      SMTP_URL: smtp://mailpit:1025
+      EMAIL_FROM: Fireline <pager@fireline.local>
     depends_on:
       postgres: { condition: service_healthy }
 

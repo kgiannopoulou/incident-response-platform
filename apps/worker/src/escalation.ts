@@ -1,5 +1,5 @@
-import { pageNextEscalationStep, withTransaction } from "@irp/database";
-import { deliverJobOptions, escalateJobOptions, shouldEscalate, type IncidentStatus } from "@irp/shared";
+import { pageNextEscalationStep, queueWebhookEvent, withTransaction } from "@irp/database";
+import { deliverJobOptions, escalateJobOptions, shouldEscalate, webhookJobOptions, type IncidentStatus } from "@irp/shared";
 import { publish, type WorkerContext } from "./context";
 
 // Pages the next step of an incident's escalation policy, if it's due.
@@ -34,7 +34,7 @@ export async function escalateIncident(ctx: WorkerContext, incidentId: number) {
       await db.query(`UPDATE incidents SET next_escalation_at = NULL WHERE id = $1`, [incidentId]);
       return null;
     }
-    if (!incident.due) return { incident, notificationIds: [], nextAt: incident.next_escalation_at, paged: false };
+    if (!incident.due) return { incident, notificationIds: [], webhookIds: [], nextAt: incident.next_escalation_at, paged: false };
 
     const paged = await pageNextEscalationStep(db, incident, incident.policy_id);
     if (!paged) {
@@ -43,7 +43,7 @@ export async function escalateIncident(ctx: WorkerContext, incidentId: number) {
         `INSERT INTO timeline_events (incident_id, event_type, message) VALUES ($1, 'INCIDENT_ESCALATED', $2)`,
         [incidentId, "Escalation policy exhausted — still unacknowledged"]
       );
-      return { incident, notificationIds: [], nextAt: null, paged: true };
+      return { incident, notificationIds: [], webhookIds: [], nextAt: null, paged: true };
     }
 
     const isFirst = incident.escalation_level === 0;
@@ -61,14 +61,20 @@ export async function escalateIncident(ctx: WorkerContext, incidentId: number) {
        VALUES ($1, 'incident.escalate', 'incident', $2, $3)`,
       [incident.organization_id, incidentId, JSON.stringify({ level: paged.level, notified: paged.recipients.length })]
     );
-    return { incident, notificationIds: paged.notificationIds, nextAt: paged.nextEscalationAt, paged: true };
+    // Step 1 is the incident's first page (webhooks already got
+    // incident.triggered when it opened); later steps are escalations.
+    const webhookIds = isFirst ? [] : await queueWebhookEvent(db, "incident.escalated", incidentId);
+    return { incident, notificationIds: paged.notificationIds, webhookIds, nextAt: paged.nextEscalationAt, paged: true };
   });
 
   if (!outcome) return { paged: false, notifications: 0 };
 
-  // After COMMIT: deliver pages, schedule the next step, tell browsers.
+  // After COMMIT: deliver pages and webhooks, schedule the next step, tell browsers.
   for (const id of outcome.notificationIds) {
     await ctx.notificationsQueue.add("deliver", { notificationId: id }, deliverJobOptions(id));
+  }
+  for (const id of outcome.webhookIds) {
+    await ctx.webhooksQueue.add("deliver-webhook", { deliveryId: id }, webhookJobOptions(id));
   }
   if (outcome.nextAt) {
     await ctx.escalationsQueue.add("escalate", { incidentId }, escalateJobOptions(Math.max(0, outcome.nextAt.getTime() - Date.now())));

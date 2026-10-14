@@ -115,7 +115,7 @@ export default function IncidentPage() {
                       {n.user_name}{" "}
                       <span className="text-xs text-zinc-500">
                         {n.kind}
-                        {n.escalation_level ? ` · L${n.escalation_level}` : ""}
+                        {n.escalation_level ? ` · L${n.escalation_level}` : ""} · {n.channel}
                       </span>
                     </span>
                     <span

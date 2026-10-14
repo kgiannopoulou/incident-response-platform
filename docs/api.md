@@ -180,13 +180,60 @@ Event types: `incident.created`, `incident.updated`, `timeline.added`, `service.
 `alert.received`; control messages `connected` and `resync` (re-fetch everything). Reconnect with the
 `Last-Event-ID` header (browsers do this automatically) or `?lastEventId=` to replay missed events.
 
+## Webhooks (admin)
+
+| Method | Path | Body | Notes |
+| --- | --- | --- | --- |
+| GET | `/webhooks` | — | Endpoints with `events`, `enabled`, `disabled_reason`, `last_delivery`, `failures_24h` (never the secret) |
+| POST | `/webhooks` | `{ url, description?, events? }` | `url` must be http(s); `events` defaults to all four. Returns `secret` (`whsec_…`) **once** |
+| PATCH | `/webhooks/:id` | `{ url?, description?, events?, enabled? }` | Re-enabling clears `disabled_reason` |
+| DELETE | `/webhooks/:id` | — | |
+| POST | `/webhooks/:id/rotate-secret` | — | New secret, returned once |
+| POST | `/webhooks/:id/test` | — | `202`; queues a signed `ping` |
+| GET | `/webhooks/:id/deliveries` | — | Last 50: `event`, `status`, `attempts`, `response_status`, `duration_ms`, `last_error`, `payload` |
+| POST | `/webhooks/deliveries/:id/redeliver` | — | `202`; resends the stored payload (same `id`). `409` while still queued |
+
+What a receiver gets:
+
+```http
+POST /fireline HTTP/1.1
+Content-Type: application/json
+User-Agent: Fireline-Webhooks/1.0
+Fireline-Event: incident.triggered
+Fireline-Delivery: 17
+Fireline-Signature: t=1760450538,v1=6f1c0e…
+
+{
+  "id": "evt_01M4X0Q7…",
+  "event": "incident.triggered",
+  "createdAt": "2026-10-14T14:02:18.000Z",
+  "incident": {
+    "id": "INC-142", "number": 142,
+    "title": "Checkout API unavailable",
+    "severity": "critical", "severityLevel": "sev1", "severityLabel": "SEV1 · Critical",
+    "status": "triggered",
+    "service": { "name": "Checkout API", "slug": "checkout-api" },
+    "escalationLevel": 0,
+    "url": "http://localhost:3000/incidents/142",
+    "triggeredAt": "2026-10-14T14:02:18.000Z", "acknowledgedAt": null, "resolvedAt": null
+  },
+  "actor": null
+}
+```
+
+Events: `incident.triggered`, `incident.acknowledged`, `incident.escalated`, `incident.resolved` (and
+`ping` from *Send test*). Verify with `v1 = hex(HMAC-SHA256(secret, t + "." + rawBody))` and reject
+timestamps older than 5 minutes (`verifyWebhookSignature()` in `@irp/shared/crypto` does both).
+Delivery is at-least-once: dedupe on `id`. Any 2xx is success; other answers and timeouts (10 s) are
+retried 5 times (5 s → 40 s backoff); `410 Gone` disables the endpoint.
+
 ## Background jobs (admin)
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| GET | `/admin/queues` | Counts per queue (`notifications`, `escalations`, `dead-letter`) by state, plus `workers`: live worker heartbeats (`id`, `startedAt`, `lastSeenAt`, `processed`, `failed`, `deadLettered`) |
+| GET | `/admin/queues` | Counts per queue (`notifications`, `escalations`, `webhooks`, `dead-letter`) by state, plus `workers`: live worker heartbeats (`id`, `startedAt`, `lastSeenAt`, `processed`, `failed`, `deadLettered`) |
 | GET | `/admin/dead-letter` | Jobs that used up every retry, for your organization: original `queue`, `name`, `jobId`, `data`, `failedReason`, `attemptsMade`, `failedAt` |
-| POST | `/admin/dead-letter/:id/retry` | Re-enqueue on the original queue (a failed page's notification row is reset to `queued` first). `409` if the page is no longer failed |
+| POST | `/admin/dead-letter/:id/retry` | Re-enqueue on the original queue (a failed page's notification row, or webhook delivery row, is reset to `queued` first). `409` if the page is no longer failed |
 | DELETE | `/admin/dead-letter/:id` | Discard |
 
 Retries and discards are written to the audit log.

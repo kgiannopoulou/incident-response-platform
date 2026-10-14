@@ -1,4 +1,4 @@
-import { pageNextEscalationStep, type PoolClient } from "@irp/database";
+import { pageNextEscalationStep, queueWebhookEvent, type PoolClient } from "@irp/database";
 import {
   type AlertSeverity,
   assertTransition,
@@ -180,6 +180,7 @@ export async function createIncident(db: PoolClient, fx: Effects, input: NewInci
     status: incident.status,
     severity: incident.severity,
   });
+  fx.deliverWebhooks(await queueWebhookEvent(db, "incident.triggered", incident.id, { actor: input.actor?.name }));
   // The HTTP request doesn't wait for anyone to be paged: the worker picks
   // this job up and pages step 1 (Postgres still records that it is due).
   if (incident.next_escalation_at) fx.escalate(incident.id, "incident-created");
@@ -246,6 +247,9 @@ export async function changeStatus(
     );
     notified.forEach((n) => fx.deliverNotification(n.id));
     await generatePostmortem(db, fx, updated, actor, { onlyIfMissing: true });
+  }
+  if (to === "acknowledged" || to === "resolved") {
+    fx.deliverWebhooks(await queueWebhookEvent(db, `incident.${to}`, updated.id, { actor: actor?.name }));
   }
 
   await recomputeServiceStatus(db, fx, updated.service_id);
@@ -318,6 +322,8 @@ export async function escalateNow(db: PoolClient, fx: Effects, incident: Inciden
   const { rows } = await db.query<IncidentRow>(`SELECT * FROM incidents WHERE id = $1`, [incident.id]);
   const updated = rows[0];
   if (updated.next_escalation_at) fx.escalate(updated.id);
+
+  fx.deliverWebhooks(await queueWebhookEvent(db, "incident.escalated", updated.id, { actor: actor?.name }));
 
   const names = paged.recipients.map((t) => t.name).join(", ") || "nobody (empty step)";
   await addTimeline(db, fx, updated, "INCIDENT_ESCALATED", `Escalated to level ${paged.level}: paged ${names}`, actor, {

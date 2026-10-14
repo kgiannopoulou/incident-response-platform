@@ -4,6 +4,7 @@ import {
   deliverJobOptions,
   escalateJobOptions,
   QUEUES,
+  webhookJobOptions,
   WORKER_HEARTBEAT_PREFIX,
   type DeadLetterJob,
   type WorkerHeartbeat,
@@ -49,7 +50,7 @@ export function adminRouter(deps: Deps) {
   router.get("/queues", async (_req, res) => {
     const states = ["waiting", "active", "delayed", "failed", "completed", "paused"] as const;
     const queues = await Promise.all(
-      [deps.queues.notifications, deps.queues.escalations, deps.queues.deadLetter].map(async (q) => ({
+      [deps.queues.notifications, deps.queues.escalations, deps.queues.webhooks, deps.queues.deadLetter].map(async (q) => ({
         name: q.name,
         counts: await q.getJobCounts(...states),
       }))
@@ -83,6 +84,15 @@ export function adminRouter(deps: Deps) {
       );
       if (!rowCount) throw new HttpError(409, "That notification is no longer failed");
       await deps.queues.notifications.add("deliver", { notificationId }, deliverJobOptions(notificationId));
+    } else if (queue === QUEUES.webhooks) {
+      const deliveryId = Number(data.deliveryId);
+      const { rowCount } = await deps.pool.query(
+        `UPDATE webhook_deliveries SET status = 'queued', attempts = 0, last_error = NULL
+         WHERE id = $1 AND organization_id = $2 AND status = 'failed'`,
+        [deliveryId, orgId]
+      );
+      if (!rowCount) throw new HttpError(409, "That webhook delivery is no longer failed");
+      await deps.queues.webhooks.add("deliver-webhook", { deliveryId }, webhookJobOptions(deliveryId));
     } else {
       await deps.queues.escalations.add(job.data.name, { incidentId: Number(data.incidentId) }, escalateJobOptions());
     }

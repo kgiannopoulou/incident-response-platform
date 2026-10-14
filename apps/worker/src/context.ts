@@ -1,6 +1,7 @@
 import type { Pool } from "pg";
 import type { Queue } from "bullmq";
 import type { Redis } from "ioredis";
+import nodemailer from "nodemailer";
 import type { RealtimeEvent } from "@irp/shared";
 import { publishRealtime } from "@irp/shared/realtime";
 
@@ -9,27 +10,35 @@ export type WorkerContext = {
   redis: Redis; // publisher
   notificationsQueue: Queue;
   escalationsQueue: Queue;
+  webhooksQueue: Queue;
   deadLetterQueue: Queue;
-  sender: NotificationSender;
+  email: EmailSender;
+  // Links in emails and webhook payloads point here.
+  webOrigin: string;
+  // Refuse webhook URLs that resolve to private / loopback addresses (SSRF
+  // protection). Off in local development, where receivers run on localhost.
+  blockPrivateWebhookTargets: boolean;
 };
 
-// How a page actually leaves the system. The default posts to a
-// Slack-compatible webhook when NOTIFY_WEBHOOK_URL is set and otherwise just
-// logs, so the whole flow works locally with no external accounts.
-export type NotificationSender = (message: { to: { name: string; email: string }; text: string }) => Promise<void>;
+export type EmailMessage = { to: { name: string; email: string }; subject: string; text: string; html: string };
 
-export function createSender(webhookUrl: string | undefined): NotificationSender {
-  return async ({ to, text }) => {
-    if (!webhookUrl) {
-      console.log(`[notify] -> ${to.name} <${to.email}>: ${text}`);
-      return;
-    }
-    const res = await fetch(webhookUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: `@${to.name}: ${text}` }),
-    });
-    if (!res.ok) throw new Error(`Webhook responded ${res.status}`);
+// How a page leaves the system. Returns the provider's message id.
+export type EmailSender = (message: EmailMessage) => Promise<{ messageId: string | null }>;
+
+// SMTP when SMTP_URL is set — locally that's Mailpit from docker compose
+// (smtp://localhost:1025, inbox at http://localhost:8025) — otherwise the
+// email is only logged, so the whole flow works with no accounts at all.
+export function createEmailSender(smtpUrl: string | undefined, from: string): EmailSender {
+  if (!smtpUrl) {
+    return async ({ to, subject }) => {
+      console.log(`[email] (no SMTP_URL, not sent) -> ${to.name} <${to.email}>: ${subject}`);
+      return { messageId: null };
+    };
+  }
+  const transport = nodemailer.createTransport(smtpUrl);
+  return async ({ to, subject, text, html }) => {
+    const info = await transport.sendMail({ from, to: { name: to.name, address: to.email }, subject, text, html });
+    return { messageId: info.messageId ?? null };
   };
 }
 

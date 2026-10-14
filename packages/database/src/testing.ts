@@ -59,7 +59,7 @@ export async function resetFixtures(pool: pg.Pool) {
   const q = async (sql: string, params: unknown[] = []) => (await pool.query(sql, params)).rows[0];
 
   await pool.query(`
-    TRUNCATE audit_log, api_keys, postmortems, notifications, timeline_events, incident_responders,
+    TRUNCATE audit_log, api_keys, webhook_deliveries, webhook_endpoints, postmortems, notifications, timeline_events, incident_responders,
       incident_alerts, alerts, incidents, alert_rules, services, escalation_step_targets,
       escalation_steps, escalation_policies, team_members, teams, organization_members, users, organizations
     RESTART IDENTITY CASCADE

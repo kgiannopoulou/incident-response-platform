@@ -13,6 +13,7 @@ const NAV = [
   { href: "/alerts", label: "Alerts" },
   { href: "/services", label: "Services" },
   { href: "/escalation-policies", label: "Escalation" },
+  { href: "/webhooks", label: "Webhooks", adminOnly: true },
   { href: "/audit", label: "Audit log", adminOnly: true },
   { href: "/system", label: "System", adminOnly: true },
 ];

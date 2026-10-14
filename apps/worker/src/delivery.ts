@@ -1,16 +1,9 @@
-import { incidentRef, INCIDENT_SEVERITY_LABEL, type IncidentSeverity } from "@irp/shared";
+import { renderPageEmail, type IncidentSeverity, type PageKind } from "@irp/shared";
 import { publish, type WorkerContext } from "./context";
 
-const VERB: Record<string, string> = {
-  triggered: "New incident",
-  escalated: "ESCALATED — still unacknowledged",
-  acknowledged: "Acknowledged",
-  resolved: "Resolved",
-};
-
-// Sends one notification row. Only rows still 'queued' are sent, so a
-// redelivered job (BullMQ retry, or the sweeper re-enqueuing it) never
-// pages someone twice for the same row.
+// Sends one page (a notification row) by email. Only rows still 'queued'
+// are sent, so a redelivered job (BullMQ retry, or the sweeper re-enqueuing
+// it) never pages someone twice for the same row.
 //
 // `isFinalAttempt` lets the caller mark the row failed once BullMQ has used
 // up its retries; until then the error is rethrown so BullMQ retries with
@@ -29,12 +22,17 @@ export async function deliverNotification(ctx: WorkerContext, notificationId: nu
   const n = rows[0];
   if (!n || n.status !== "queued") return "skipped" as const;
 
-  const text =
-    `[${INCIDENT_SEVERITY_LABEL[n.severity as IncidentSeverity]}] ${VERB[n.kind]}: ${incidentRef(n.number)} ` +
-    `${n.title}${n.service_name ? ` (${n.service_name})` : ""}`;
+  const message = renderPageEmail({
+    kind: n.kind as PageKind,
+    recipientName: n.name,
+    incident: { number: n.number, title: n.title, severity: n.severity as IncidentSeverity, serviceName: n.service_name },
+    escalationLevel: n.escalation_level,
+    webOrigin: ctx.webOrigin,
+  });
 
+  let messageId: string | null;
   try {
-    await ctx.sender({ to: { name: n.name, email: n.email }, text });
+    ({ messageId } = await ctx.email({ to: { name: n.name, email: n.email }, ...message }));
   } catch (err) {
     await ctx.pool.query(
       `UPDATE notifications SET attempts = attempts + 1, last_error = $2,
@@ -47,9 +45,10 @@ export async function deliverNotification(ctx: WorkerContext, notificationId: nu
   }
 
   await ctx.pool.query(
-    `UPDATE notifications SET status = 'sent', sent_at = now(), attempts = attempts + 1, last_error = NULL
+    `UPDATE notifications SET status = 'sent', sent_at = now(), attempts = attempts + 1, last_error = NULL,
+            provider_message_id = $2
      WHERE id = $1 AND status = 'queued'`,
-    [notificationId]
+    [notificationId, messageId]
   );
   await publish(ctx, n.organization_id, { type: "incident.updated", incidentId: n.incident_id, number: n.number });
   return "sent" as const;

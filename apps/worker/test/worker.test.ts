@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { resetFixtures, setupTestDatabase, type Fixtures } from "@irp/database/testing";
 import { deliverJobOptions, QUEUES, WORKER_HEARTBEAT_PREFIX, type DeliverNotificationJob } from "@irp/shared";
 import type { Pool } from "pg";
-import type { NotificationSender, WorkerContext } from "../src/context";
+import type { EmailSender, WorkerContext } from "../src/context";
 import { handleFailures } from "../src/dead-letter";
 import { deliverNotification } from "../src/delivery";
 import { Heartbeat } from "../src/heartbeat";
@@ -16,9 +16,10 @@ let ctx: WorkerContext;
 let fx: Fixtures;
 const sent: { to: string; text: string }[] = [];
 let failSends = false;
-const sender: NotificationSender = async ({ to, text }) => {
+const email: EmailSender = async ({ to, subject }) => {
   if (failSends) throw new Error("webhook down");
-  sent.push({ to: to.name, text });
+  sent.push({ to: to.name, text: subject });
+  return { messageId: `<${sent.length}@test>` };
 };
 
 beforeAll(async () => {
@@ -31,13 +32,17 @@ beforeAll(async () => {
     redis: new Redis(url.toString(), { maxRetriesPerRequest: null }),
     notificationsQueue: new Queue(QUEUES.notifications, { connection }),
     escalationsQueue: new Queue(QUEUES.escalations, { connection }),
+    webhooksQueue: new Queue(QUEUES.webhooks, { connection }),
     deadLetterQueue: new Queue(QUEUES.deadLetter, { connection }),
-    sender,
+    email,
+    webOrigin: "http://fireline.test",
+    blockPrivateWebhookTargets: false,
   };
 });
 afterAll(async () => {
   await ctx.notificationsQueue.close();
   await ctx.escalationsQueue.close();
+  await ctx.webhooksQueue.close();
   await ctx.deadLetterQueue.close();
   await ctx.redis.quit();
   await pool.end();

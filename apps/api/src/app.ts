@@ -11,6 +11,7 @@ import { escalationPoliciesRouter } from "./routes/escalation-policies";
 import { incidentsRouter } from "./routes/incidents";
 import { orgRouter } from "./routes/org";
 import { servicesRouter } from "./routes/services";
+import { webhooksRouter } from "./routes/webhooks";
 
 // Builds the Express app from injected dependencies (see deps.ts), so tests
 // can run it in-process against a test database without listening on a port.
@@ -44,6 +45,7 @@ export function createApp(deps: Deps) {
   v1.use("/services", servicesRouter(deps));
   v1.use("/escalation-policies", escalationPoliciesRouter(deps));
   v1.use("/admin", requireAdmin, adminRouter(deps));
+  v1.use("/webhooks", webhooksRouter(deps));
   v1.use("/", orgRouter(deps));
   app.use("/api/v1", v1);
 

@@ -1,4 +1,4 @@
-import { deliverJobOptions } from "@irp/shared";
+import { deliverJobOptions, webhookJobOptions } from "@irp/shared";
 import type { WorkerContext } from "./context";
 import { escalateIncident } from "./escalation";
 
@@ -37,5 +37,13 @@ export async function sweep(ctx: WorkerContext) {
       deliverJobOptions(id)
     );
   }
-  return { escalated, requeued: stuck.length };
+  // Same for webhook deliveries (outbox rows written with the change).
+  const { rows: stuckHooks } = await ctx.pool.query<{ id: number }>(
+    `SELECT id FROM webhook_deliveries WHERE status = 'queued' AND created_at < now() - interval '30 seconds'
+     ORDER BY id LIMIT 200`
+  );
+  for (const { id } of stuckHooks) {
+    await ctx.webhooksQueue.add("deliver-webhook", { deliveryId: id }, webhookJobOptions(id));
+  }
+  return { escalated, requeued: stuck.length + stuckHooks.length };
 }

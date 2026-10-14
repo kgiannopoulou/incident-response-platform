@@ -66,6 +66,7 @@ export type IncidentDetail = {
     kind: string;
     status: string;
     escalation_level: number | null;
+    channel: "email";
     attempts: number;
     user_name: string;
     created_at: string;

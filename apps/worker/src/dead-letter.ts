@@ -11,6 +11,13 @@ export function isFinalFailure(job: Pick<Job, "attemptsMade" | "opts">) {
 // Which organization a failed job belongs to, so the dead-letter view and
 // retries stay tenant-scoped even though the queue itself is shared.
 async function organizationOf(ctx: WorkerContext, queue: WorkQueue, data: Record<string, unknown>) {
+  if (queue === "webhooks") {
+    const { rows } = await ctx.pool.query<{ organization_id: number }>(
+      `SELECT organization_id FROM webhook_deliveries WHERE id = $1`,
+      [data.deliveryId]
+    );
+    return rows[0]?.organization_id ?? null;
+  }
   const { rows } =
     queue === "notifications"
       ? await ctx.pool.query<{ organization_id: number }>(

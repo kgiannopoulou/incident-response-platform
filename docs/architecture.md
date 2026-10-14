@@ -8,7 +8,7 @@ and how to run it.
 | Component | Responsibility | Talks to |
 | --- | --- | --- |
 | **API** (`apps/api`) | Validates and ingests alerts, owns every write to incidents/services/postmortems, serves the dashboard's REST endpoints and the SSE stream | Postgres (all writes in transactions), Redis (publish events, enqueue jobs, subscribe for SSE) |
-| **Worker** (`apps/worker`) | Escalation policies, notification delivery, periodic recovery sweep | Postgres, Redis (BullMQ consumer, publish events), notification webhook |
+| **Worker** (`apps/worker`) | Escalation policies, email pages, webhook deliveries, dead-lettering, periodic recovery sweep | Postgres, Redis (BullMQ consumer, publish events), SMTP, webhook receivers |
 | **Web** (`apps/web`) | Dashboard for responders and admins | API only (REST + `EventSource`) |
 | **Postgres** | Source of truth for everything, including "who still needs to be paged" | — |
 | **Redis** | BullMQ queues and pub/sub for realtime events — *never* the only copy of anything important | — |
@@ -382,6 +382,43 @@ API ─┬─ save incident (COMMIT)
 - **Graceful shutdown.** `SIGTERM` stops the sweeper, lets in-flight jobs finish (`Worker.close()`),
   removes the heartbeat and closes connections; a hard kill is covered by BullMQ's stalled-job
   recovery plus idempotent jobs.
+
+## Notifications: email and webhooks
+
+Two channels, for two audiences:
+
+| | Email | Webhook |
+| --- | --- | --- |
+| For | a person being paged | a system (chat bot, ticketing, status page) |
+| Row | `notifications` (one per person per escalation step) | `webhook_deliveries` (one per endpoint per event) |
+| Written by | escalation (`pageNextEscalationStep`), resolve | `queueWebhookEvent()` on triggered / acknowledged / escalated / resolved |
+| Sent by | worker, `notifications` queue, nodemailer SMTP | worker, `webhooks` queue, `fetch` |
+| Retries | 5 × (2 s → 16 s) | 5 × (5 s → 40 s) |
+
+- **Outbox, not fire-and-forget.** Both are rows inserted *in the transaction* that caused them, then
+  delivered by a job enqueued after COMMIT; the sweeper re-drives rows still `queued` after 30 s. So a
+  webhook can't announce an acknowledgement that rolled back, and a crash between COMMIT and enqueue
+  delays a delivery instead of losing it.
+- **The payload is frozen at the event.** The JSON body (with a unique `evt_<ULID>` id) is stored on
+  the delivery row and sent byte-for-byte on every attempt and on manual *Redeliver*, so a retry
+  three minutes later still describes the incident as it was when the event happened, and receivers
+  can dedupe on `id` (delivery is at-least-once).
+- **Signed.** `Fireline-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "t.body")>` — the
+  Stripe-style scheme: the timestamp is inside the MAC, so a captured request can't be replayed after
+  the 5-minute window; verification uses a constant-time compare. The secret (`whsec_…`) is shown once;
+  unlike API keys it can't be stored as a hash because the worker needs it to sign.
+- **Being a good webhook citizen.** 10 s timeout, `redirect: "manual"`, any 2xx is success, `410 Gone`
+  disables the endpoint (with the reason shown in the UI) instead of retrying forever.
+- **SSRF.** Webhook URLs are user-supplied, and the worker runs inside the network. With
+  `WEBHOOK_BLOCK_PRIVATE_NETWORKS=true` the worker resolves the host and refuses loopback, RFC 1918,
+  link-local (cloud metadata `169.254.169.254`), CGNAT and unique-local IPv6 targets before
+  connecting, and doesn't follow redirects. It's off locally so a receiver on `localhost` works.
+- **Email** renders a subject that works on a lock screen (`[SEV1 · Critical] New incident: INC-142
+  Checkout API unavailable (Checkout API)`) plus text and HTML bodies with a link to the incident;
+  the SMTP `Message-ID` is stored on the row. Without `SMTP_URL` the worker logs instead of sending.
+  Docker compose runs **Mailpit** so every page is visible at http://localhost:8025.
+- Integrations such as Slack or Teams are deliberately *not* built in: they are a webhook receiver
+  away, and the delivery architecture (outbox, signing, retries, DLQ) is the part worth getting right.
 
 ## Realtime updates
 

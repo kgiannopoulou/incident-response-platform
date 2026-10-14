@@ -86,8 +86,13 @@ Monitoring tool / app ──POST /api/v1/alerts──► API key (hashed lookup)
   next step as a delayed job. Per-queue retry policies with exponential backoff, a **dead-letter
   queue** for jobs that exhausted their retries (retry / discard from the **System** page, audited),
   worker heartbeats in `/health`, graceful shutdown.
-- **Notifications** delivered by the worker to a Slack-compatible webhook, or logged when none is
-  configured.
+- **Notifications on two channels.** *Email* pages to people (SMTP via nodemailer; locally every
+  page lands in the Mailpit inbox) with severity, service and a link to the incident. *Webhooks* for
+  systems: admins register endpoints and pick events (`incident.triggered`, `.acknowledged`,
+  `.escalated`, `.resolved`); each delivery is an outbox row written in the same transaction, POSTed
+  as JSON signed with **HMAC-SHA256** (`Fireline-Signature: t=…,v1=…`, replay window), retried with
+  backoff, dead-lettered when exhausted, auto-disabled on `410 Gone`, and visible with status codes,
+  payloads, *Send test* and *Redeliver* in the UI. Optional SSRF guard for private addresses.
 - **Live alert feed** (🔴 CRITICAL · 🟠 HIGH · 🟡 WARNING · 🔵 INFO, "12 sec ago") and **real-time
   updates** over Server-Sent Events: acknowledge in one window and every other window showing the
   incident flips to ACKNOWLEDGED instantly ("Alex Morgan updated this incident"). Events from the API
@@ -176,7 +181,7 @@ Prerequisites: Node.js 20+ and Docker.
 
 ```sh
 cp .env.example .env            # then set JWT_SECRET to a long random string
-docker compose up -d            # Postgres (5435) + Redis (6380)
+docker compose up -d            # Postgres (5435), Redis (6380), Mailpit (SMTP 1025, inbox :8025)
 npm install
 npm run db:migrate
 npm run db:seed                 # demo org, users, services, escalation policies (wipes data!)
@@ -202,7 +207,8 @@ npm run simulate -- noise       # INFO/WARNING (recorded), staging alert (suppre
 npm run simulate -- recover     # monitoring clears the alerts → Checkout auto-resolves
 ```
 
-Watch the dashboard update live, see the Payments team (Sam, Jordan) paged in the worker log, wait
+Watch the dashboard update live, see the Payments team (Sam, Jordan) paged by email in the Mailpit
+inbox (http://localhost:8025), wait
 two minutes without acknowledging to watch it escalate to Alex (and at five minutes to Riley), then acknowledge, add notes, resolve, and open the
 generated postmortem.
 
@@ -259,7 +265,9 @@ erDiagram
   alerts ||--o{ incident_alerts : "grouped into"
   incidents ||--o{ incident_responders : has
   incidents ||--o{ timeline_events : has
-  incidents ||--o{ notifications : pages
+  incidents ||--o{ notifications : "pages (email)"
+  organizations ||--o{ webhook_endpoints : has
+  webhook_endpoints ||--o{ webhook_deliveries : "signed POSTs"
   incidents ||--o| postmortems : has
   organizations ||--o{ audit_log : records
 ```
@@ -296,7 +304,9 @@ npm run lint
   tenant isolation, delete refused while in use, steps scheduled from the trigger time), the
   **dead-letter queue** (a page failing all 5 attempts lands there with its error and organization;
   retry resets the row and re-enqueues; tenant-scoped; audited), worker heartbeats and the retry
-  policy.
+  policy, **notifications** (webhook fan-out only to enabled, subscribed endpoints of the right
+  tenant; signatures verified by a real local receiver; non-2xx retried then failed; `410` disables;
+  SSRF guard; secrets returned once and never listed; email subject and links).
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs typecheck, lint, all tests
 against Postgres/Redis service containers, the web production build, and the Docker image build.
@@ -304,7 +314,7 @@ against Postgres/Redis service containers, the web production build, and the Doc
 ## Roadmap
 
 - On-call schedules (rotations) as escalation targets instead of fixed users
-- Email/SMS channels and per-user notification preferences
+- SMS / push / Slack-app channels and per-user notification preferences (contact methods)
 - Status page for customers, driven by service status
 - Scoped API keys (e.g. trigger-only vs. resolve) and per-organization quotas
 - Slack slash-commands to acknowledge/resolve from chat

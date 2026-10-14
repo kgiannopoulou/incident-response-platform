@@ -30,7 +30,7 @@ async function main() {
   }
   await withTransaction(pool, async (db) => {
     await db.query(`
-      TRUNCATE audit_log, api_keys, postmortems, notifications, timeline_events, incident_responders,
+      TRUNCATE audit_log, api_keys, webhook_deliveries, webhook_endpoints, postmortems, notifications, timeline_events, incident_responders,
         incident_alerts, alerts, incidents, alert_rules, services, escalation_step_targets,
         escalation_steps, escalation_policies, team_members, teams, organization_members, users, organizations
       RESTART IDENTITY CASCADE
