@@ -16,11 +16,21 @@ and an append-only, hash-verified timeline that updates live.*
 
 ![Dashboard](docs/screenshots/dashboard.jpg)
 
-| Escalation, live | Generated postmortem |
+| Escalation, live | Acknowledgement timeout countdown |
 | --- | --- |
-| ![Incident with escalation](docs/screenshots/incident-escalation.jpg) | ![Postmortem](docs/screenshots/postmortem.jpg) |
-| **Alert feed** | **API keys: rotation and revocation** |
-| ![Alerts](docs/screenshots/alerts.jpg) | ![API keys](docs/screenshots/api-keys.jpg) |
+| ![Incident with escalation](docs/screenshots/incident-escalation.jpg) | ![Acknowledgement timeout](docs/screenshots/incident-ack-timeout.jpg) |
+| **Escalation policies** | **Signed webhooks with a delivery log** |
+| ![Escalation policies](docs/screenshots/escalation-policies.jpg) | ![Webhooks](docs/screenshots/webhooks.jpg) |
+| **Background jobs and the dead-letter queue** | **Alert feed** |
+| ![System](docs/screenshots/system.jpg) | ![Alerts](docs/screenshots/alerts.jpg) |
+| **API keys: rotation and revocation** | |
+| ![API keys](docs/screenshots/api-keys.jpg) | |
+
+![Postmortem](docs/screenshots/postmortem.jpg)
+
+*A published postmortem: every timeline line comes from the incident's immutable event log —
+including the missed 2-minute acknowledgement timeout that paged the team lead early — with
+retrospective sections and tracked action items.*
 
 ## The workflow
 
