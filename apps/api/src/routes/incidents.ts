@@ -16,6 +16,7 @@ import {
   changeSeverity,
   changeStatus,
   createIncident,
+  escalateNow,
   generatePostmortem,
   lockIncident,
   type Actor,
@@ -87,7 +88,8 @@ export function incidentsRouter(deps: Deps) {
     const orgId = req.user!.organizationId;
     const { rows } = await deps.pool.query(
       `SELECT i.*, s.name AS service_name, s.status AS service_status, u.name AS commander_name,
-              ep.name AS escalation_policy_name
+              ep.name AS escalation_policy_name,
+              (SELECT max(level) FROM escalation_rules r WHERE r.policy_id = ep.id) AS escalation_max_level
        FROM incidents i
        LEFT JOIN services s ON s.id = i.service_id
        LEFT JOIN escalation_policies ep ON ep.id = s.escalation_policy_id
@@ -153,6 +155,15 @@ export function incidentsRouter(deps: Deps) {
     const incident = await runTx(deps, async (db, fx) => {
       const locked = await lockIncident(db, req.user!.organizationId, numberParam(req));
       return changeStatus(db, fx, locked, "acknowledged", actorOf(req));
+    });
+    res.json({ incident });
+  });
+
+  // Page the next escalation level now ("Escalate" on the incident page).
+  router.post("/:number/escalate", async (req, res) => {
+    const incident = await runTx(deps, async (db, fx) => {
+      const locked = await lockIncident(db, req.user!.organizationId, numberParam(req));
+      return escalateNow(db, fx, locked, actorOf(req));
     });
     res.json({ incident });
   });

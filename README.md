@@ -65,7 +65,11 @@ Monitoring tool / app ──POST /api/v1/alerts──► API key (hashed lookup)
 - **Incident lifecycle** enforced by a state machine (`triggered → acknowledged → investigating →
   mitigated → resolved`, with shortcuts to `resolved`; `resolved` is final), validated in the API *and*
   by a database trigger, with row locking so two people clicking *Acknowledge* can't both win.
-- **Escalation policies** — multi-level, users or whole teams, per-level delays; acknowledging stops it.
+- **Incident page** — the centerpiece: status, severity, live "started 14 minutes ago" and response
+  times, *Acknowledge / Start investigating / Mark mitigated / Resolve* driven by the state machine,
+  *Escalate* to page the next level on demand, responders, paging, grouped alerts and the timeline.
+- **Escalation policies** — multi-level, users or whole teams, per-level delays; acknowledging stops
+  the automatic schedule, *Escalate* pages the next level immediately.
 - **Notifications** via a background worker (BullMQ) with retries/backoff; delivered to a
   Slack-compatible webhook, or logged when none is configured.
 - **Live alert feed** (🔴 CRITICAL · 🟠 HIGH · 🟡 WARNING · 🔵 INFO, "12 sec ago") and **live updates** over Server-Sent Events, fanned out through Redis pub/sub so events from the

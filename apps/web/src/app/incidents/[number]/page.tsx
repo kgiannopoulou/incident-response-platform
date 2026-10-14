@@ -2,54 +2,34 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useState, type FormEvent } from "react";
-import {
-  INCIDENT_SEVERITIES,
-  INCIDENT_SEVERITY_LABEL,
-  incidentRef,
-  type IncidentSeverity,
-  type IncidentStatus,
-} from "@irp/shared";
+import { useState } from "react";
+import { incidentRef } from "@irp/shared";
 import { ALERT_SEVERITY_STYLE } from "@/components/alert-feed";
-import { Button, Card, cx, Empty, ErrorState, inputClass, Loading, SeverityBadge, ServiceStatusPill, StatusBadge } from "@/components/ui";
+import { IncidentHeader } from "@/components/incident/incident-header";
+import { IncidentTimeline } from "@/components/incident/incident-timeline";
+import { RespondersCard } from "@/components/incident/responders-card";
+import { Card, cx, Empty, ErrorState, Loading } from "@/components/ui";
 import { post } from "@/lib/api";
-import { clock, dateTime, duration, timeAgo } from "@/lib/format";
+import { useUser } from "@/lib/auth";
+import { clock, timeAgo } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
 import type { IncidentDetail, User } from "@/lib/types";
 
-const TIMELINE_ICON: Record<string, string> = {
-  incident_created: "🚨",
-  alert_attached: "🔔",
-  alert_resolved: "✅",
-  notified: "📟",
-  escalated: "⏫",
-  acknowledged: "👀",
-  status_changed: "🔎",
-  severity_changed: "🎚️",
-  responder_added: "🙋",
-  commander_assigned: "🎖️",
-  note: "📝",
-  resolved: "🟢",
-  postmortem_generated: "📄",
-};
-
-const TRANSITION_LABEL: Record<IncidentStatus, { label: string; variant: "danger" | "primary" | "success" | "ghost" }> = {
-  acknowledged: { label: "Acknowledge", variant: "primary" },
-  investigating: { label: "Start investigating", variant: "ghost" },
-  mitigated: { label: "Mark mitigated", variant: "ghost" },
-  resolved: { label: "Resolve", variant: "success" },
-  triggered: { label: "Trigger", variant: "danger" },
-};
-
+// The centerpiece: one incident, from the first alert to the postmortem.
+//
+//   ┌ header: INC-142 · title · status · severity · Acknowledge/Resolve/Escalate ┐
+//   ├ timeline (2/3)                         │ responders · paging · alerts ·   │
+//   │                                        │ postmortem                       │
+//   └────────────────────────────────────────┴──────────────────────────────────┘
+//
+// Everything re-fetches when a realtime event for this incident arrives.
 export default function IncidentPage() {
   const number = Number(useParams<{ number: string }>().number);
+  const me = useUser();
   const detail = useApi<IncidentDetail>(`/incidents/${number}`, (e) => "incidentId" in e && e.type !== "incident.created");
   const users = useApi<{ users: User[] }>("/users");
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [resolving, setResolving] = useState(false);
-  const [resolution, setResolution] = useState("");
-  const [note, setNote] = useState("");
 
   async function act(path: string, body?: unknown) {
     setBusy(true);
@@ -69,27 +49,7 @@ export default function IncidentPage() {
   if (detail.error) return <ErrorState message={detail.error} onRetry={detail.reload} />;
   if (!detail.data) return <Loading />;
   const { incident, timeline, alerts, responders, notifications, postmortem } = detail.data;
-  const closed = incident.status === "resolved";
-
-  async function handleTransition(to: IncidentStatus) {
-    if (to === "resolved") return setResolving(true);
-    await act("/status", { status: to });
-  }
-
-  async function handleResolve(e: FormEvent) {
-    e.preventDefault();
-    if (await act("/status", { status: "resolved", message: resolution || undefined })) {
-      setResolving(false);
-      setResolution("");
-    }
-  }
-
-  async function handleNote(e: FormEvent) {
-    e.preventDefault();
-    if (await act("/notes", { message: note })) setNote("");
-  }
-
-  const responderIds = new Set(responders.map((r) => r.id));
+  const open = incident.status !== "resolved";
 
   return (
     <div className="space-y-5">
@@ -100,180 +60,38 @@ export default function IncidentPage() {
         / {incidentRef(incident.number)}
       </div>
 
-      <header className="space-y-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <span className="font-mono text-zinc-500">{incidentRef(incident.number)}</span>
-          <SeverityBadge severity={incident.severity} />
-          <StatusBadge status={incident.status} />
-        </div>
-        <h1 className="text-2xl font-semibold">{incident.title}</h1>
-        <dl className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-zinc-400">
-          <div>
-            Service: <span className="text-zinc-200">{incident.service_name ?? "—"}</span>{" "}
-            {incident.service_status && <ServiceStatusPill status={incident.service_status} />}
-          </div>
-          <div>
-            Commander: <span className="text-zinc-200">{incident.commander_name ?? "unassigned"}</span>
-          </div>
-          <div title={dateTime(incident.triggered_at)}>Opened {timeAgo(incident.triggered_at)}</div>
-          {incident.alert_count > 0 && (
-            <div>
-              Alerts: <span className="text-zinc-200">{incident.alert_count}</span>
-              {incident.last_alert_at && <> · last {timeAgo(incident.last_alert_at)}</>}
-            </div>
-          )}
-          {incident.acknowledged_at && (
-            <div>
-              Time to acknowledge:{" "}
-              <span className="text-zinc-200">
-                {duration(Math.round((+new Date(incident.acknowledged_at) - +new Date(incident.triggered_at)) / 1000))}
-              </span>
-            </div>
-          )}
-          {incident.resolved_at && (
-            <div>
-              Time to resolve:{" "}
-              <span className="text-zinc-200">
-                {duration(Math.round((+new Date(incident.resolved_at) - +new Date(incident.triggered_at)) / 1000))}
-              </span>
-            </div>
-          )}
-        </dl>
-
-        <div className="flex flex-wrap items-center gap-2">
-          {incident.allowed_transitions.map((to) => {
-            const t = TRANSITION_LABEL[to];
-            return (
-              <Button key={to} variant={t.variant} disabled={busy} onClick={() => handleTransition(to)}>
-                {t.label}
-              </Button>
-            );
-          })}
-          <select
-            className={cx(inputClass, "max-w-48")}
-            value={incident.severity}
-            disabled={busy || closed}
-            onChange={(e) => act("/severity", { severity: e.target.value as IncidentSeverity })}
-            aria-label="Severity"
-          >
-            {INCIDENT_SEVERITIES.map((s) => (
-              <option key={s} value={s}>
-                {INCIDENT_SEVERITY_LABEL[s]}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {resolving && (
-          <form onSubmit={handleResolve} className="flex flex-wrap gap-2">
-            <input
-              className={cx(inputClass, "min-w-64 flex-1")}
-              placeholder="How was it resolved? (goes into the postmortem)"
-              value={resolution}
-              onChange={(e) => setResolution(e.target.value)}
-              autoFocus
-            />
-            <Button type="submit" variant="success" disabled={busy}>
-              Confirm resolve
-            </Button>
-            <Button type="button" variant="ghost" onClick={() => setResolving(false)}>
-              Cancel
-            </Button>
-          </form>
-        )}
-        {actionError && <ErrorState message={actionError} />}
-      </header>
+      <IncidentHeader incident={incident} busy={busy} error={actionError} act={act} />
 
       <div className="grid gap-5 lg:grid-cols-3">
-        <Card title="Timeline" className="lg:col-span-2">
-          <form onSubmit={handleNote} className="mb-4 flex gap-2">
-            <input
-              className={inputClass}
-              placeholder="Add a note: what you tried, what you found…"
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-            />
-            <Button type="submit" disabled={busy || !note.trim()}>
-              Post
-            </Button>
-          </form>
-          <ol className="space-y-3">
-            {[...timeline].reverse().map((e) => (
-              <li key={e.id} className="flex gap-3 text-sm">
-                <span className="w-6 shrink-0 text-center">{TIMELINE_ICON[e.type] ?? "•"}</span>
-                <div className="min-w-0 flex-1">
-                  <p className={cx("break-words", e.type === "note" ? "text-zinc-100" : "text-zinc-300")}>{e.message}</p>
-                  <p className="text-xs text-zinc-500">
-                    {clock(e.created_at)} · {e.actor_name ?? "system"}
-                  </p>
-                </div>
-              </li>
-            ))}
-          </ol>
-        </Card>
+        <div className="lg:col-span-2">
+          <IncidentTimeline timeline={timeline} canPost busy={busy} onNote={(message) => act("/notes", { message })} />
+        </div>
 
         <div className="space-y-5">
-          <Card title="Postmortem">
-            {postmortem ? (
-              <div className="flex items-center justify-between text-sm">
-                <span className="capitalize text-zinc-300">
-                  {postmortem.status} · updated {timeAgo(postmortem.updated_at)}
-                </span>
-                <Link href={`/incidents/${incident.number}/postmortem`} className="text-zinc-100 underline">
-                  Open
-                </Link>
-              </div>
-            ) : (
-              <p className="text-sm text-zinc-500">A draft is generated automatically when the incident is resolved.</p>
-            )}
-          </Card>
-
-          <Card title="Responders">
-            <ul className="space-y-1 text-sm">
-              {responders.map((r) => (
-                <li key={r.id} className="flex justify-between">
-                  <span className="text-zinc-200">{r.name}</span>
-                  <span className="text-xs capitalize text-zinc-500">{r.role}</span>
-                </li>
-              ))}
-              {responders.length === 0 && <li className="text-zinc-500">Nobody has joined yet.</li>}
-            </ul>
-            {users.data && (
-              <select
-                className={cx(inputClass, "mt-3")}
-                value=""
-                disabled={busy}
-                onChange={(e) => act("/responders", { userId: Number(e.target.value), role: "responder" })}
-                aria-label="Add responder"
-              >
-                <option value="">+ Add responder…</option>
-                {users.data.users
-                  .filter((u) => !responderIds.has(u.id))
-                  .map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.name}
-                    </option>
-                  ))}
-              </select>
-            )}
-          </Card>
+          <RespondersCard responders={responders} users={users.data?.users ?? null} me={me} open={open} busy={busy} act={act} />
 
           <Card title={`Paging${incident.escalation_policy_name ? ` · ${incident.escalation_policy_name}` : ""}`}>
-            {incident.next_escalation_at && (
-              <p className="mb-2 text-xs text-amber-300">
-                Escalates to the next level at {clock(incident.next_escalation_at)} unless acknowledged.
-              </p>
-            )}
             {notifications.length === 0 ? (
-              <p className="text-sm text-zinc-500">No pages sent{incident.escalation_policy_name ? " yet" : " (service has no escalation policy)"}.</p>
+              <p className="text-sm text-zinc-500">
+                No pages sent{incident.escalation_policy_name ? " yet" : " (service has no escalation policy)"}.
+              </p>
             ) : (
               <ul className="space-y-1 text-sm">
                 {notifications.map((n) => (
                   <li key={n.id} className="flex justify-between gap-2">
                     <span className="text-zinc-300">
-                      {n.user_name} <span className="text-xs text-zinc-500">{n.kind}{n.escalation_level ? ` · L${n.escalation_level}` : ""}</span>
+                      {n.user_name}{" "}
+                      <span className="text-xs text-zinc-500">
+                        {n.kind}
+                        {n.escalation_level ? ` · L${n.escalation_level}` : ""}
+                      </span>
                     </span>
-                    <span className={cx("text-xs", n.status === "sent" ? "text-emerald-400" : n.status === "failed" ? "text-red-400" : "text-zinc-500")}>
+                    <span
+                      className={cx(
+                        "text-xs",
+                        n.status === "sent" ? "text-emerald-400" : n.status === "failed" ? "text-red-400" : "text-zinc-500"
+                      )}
+                    >
                       {n.status}
                     </span>
                   </li>
@@ -306,6 +124,21 @@ export default function IncidentPage() {
                   </li>
                 ))}
               </ul>
+            )}
+          </Card>
+
+          <Card title="Postmortem">
+            {postmortem ? (
+              <div className="flex items-center justify-between text-sm">
+                <span className="capitalize text-zinc-300">
+                  {postmortem.status} · updated {timeAgo(postmortem.updated_at)}
+                </span>
+                <Link href={`/incidents/${incident.number}/postmortem`} className="text-zinc-100 underline">
+                  Open
+                </Link>
+              </div>
+            ) : (
+              <p className="text-sm text-zinc-500">A draft is generated automatically when the incident is resolved.</p>
             )}
           </Card>
         </div>

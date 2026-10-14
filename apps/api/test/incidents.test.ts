@@ -142,6 +142,66 @@ describe("incident lifecycle", () => {
     expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
   });
 
+  it("escalates on demand, level by level, until the policy is exhausted", async () => {
+    await t.alert(TEST_KEYS.checkout, critical);
+    const sam = await t.as("sam");
+    // Acknowledged incidents can still pull in more help.
+    await api().post("/api/v1/incidents/1/acknowledge").set(sam).expect(200);
+
+    const paged = async () =>
+      (
+        await t.deps.pool.query(
+          `SELECT u.name, n.escalation_level AS level FROM notifications n JOIN users u ON u.id = n.user_id
+           WHERE n.kind = 'escalated' ORDER BY n.escalation_level, u.name`
+        )
+      ).rows;
+
+    const first = await api().post("/api/v1/incidents/1/escalate").set(sam);
+    expect(first.body.incident).toMatchObject({ escalation_level: 1, next_escalation_at: null });
+    await api().post("/api/v1/incidents/1/escalate").set(sam).expect(200);
+    await api().post("/api/v1/incidents/1/escalate").set(sam).expect(200);
+    expect(await paged()).toEqual([
+      { name: "Sam", level: 1 },
+      { name: "Alex", level: 2 },
+      { name: "Alex", level: 3 }, // L3 is team Payments: Alex + Sam
+      { name: "Sam", level: 3 },
+    ]);
+    const exhausted = await api().post("/api/v1/incidents/1/escalate").set(sam);
+    expect(exhausted.status).toBe(409);
+    expect(exhausted.body.error).toMatch(/last level \(L3\)/);
+
+    const detail = await api().get("/api/v1/incidents/1").set(sam);
+    const escalations = detail.body.timeline.filter((e: { type: string }) => e.type === "escalated");
+    expect(escalations.map((e: { message: string; actor_name: string }) => [e.message, e.actor_name])).toEqual([
+      ["Escalated to level 1: paged Sam", "Sam"],
+      ["Escalated to level 2: paged Alex", "Sam"],
+      ["Escalated to level 3: paged Alex, Sam", "Sam"],
+    ]);
+    expect(detail.body.incident.escalation_max_level).toBe(3);
+  });
+
+  it("keeps the automatic schedule going after a manual escalation of an unacknowledged incident", async () => {
+    await t.alert(TEST_KEYS.checkout, critical);
+    const sam = await t.as("sam");
+    const res = await api().post("/api/v1/incidents/1/escalate").set(sam);
+    // L1 paged by hand; L2 is due one minute later unless someone acknowledges.
+    const due = new Date(res.body.incident.next_escalation_at).getTime() - Date.now();
+    expect(due).toBeGreaterThan(50_000);
+    expect(due).toBeLessThanOrEqual(60_000);
+  });
+
+  it("refuses to escalate without a policy or once resolved", async () => {
+    await t.alert(TEST_KEYS.auth, critical); // auth-service has no escalation policy
+    const sam = await t.as("sam");
+    const none = await api().post("/api/v1/incidents/1/escalate").set(sam);
+    expect(none.status).toBe(409);
+    expect(none.body.error).toMatch(/no escalation policy/);
+
+    await t.alert(TEST_KEYS.checkout, critical);
+    await api().post("/api/v1/incidents/2/status").set(sam).send({ status: "resolved" }).expect(200);
+    expect((await api().post("/api/v1/incidents/2/escalate").set(sam)).status).toBe(409);
+  });
+
   it("supports manually declared incidents with severity changes and responders", async () => {
     const alex = await t.as("alex");
     const created = await api()

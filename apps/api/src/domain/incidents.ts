@@ -315,6 +315,72 @@ export async function addResponder(
   changed(fx, incident);
 }
 
+// "Escalate" button: pages the next level of the service's escalation policy
+// right now, without waiting for its delay — also after acknowledgement,
+// when the responder on it needs more hands. Pages are rows delivered by the
+// worker (fx.deliverNotification); while the incident is still unacknowledged
+// the automatic schedule continues from the new level.
+export async function escalateNow(db: PoolClient, fx: Effects, incident: IncidentRow, actor: Actor) {
+  if (incident.status === "resolved") throw new HttpError(409, "Resolved incidents can't be escalated");
+  const { rows: policy } = await db.query<{ id: number }>(
+    `SELECT escalation_policy_id AS id FROM services WHERE id = $1 AND escalation_policy_id IS NOT NULL`,
+    [incident.service_id]
+  );
+  if (!policy[0]) throw new HttpError(409, "This incident's service has no escalation policy");
+
+  const { rows: levels } = await db.query<{ level: number; delay_minutes: number }>(
+    `SELECT DISTINCT level, delay_minutes FROM escalation_rules WHERE policy_id = $1 AND level > $2 ORDER BY level`,
+    [policy[0].id, incident.escalation_level]
+  );
+  const [current, following] = levels;
+  if (!current) {
+    throw new HttpError(409, `Already escalated to the last level (L${incident.escalation_level}) of the policy`);
+  }
+
+  const { rows: targets } = await db.query<{ id: number; name: string }>(
+    `SELECT DISTINCT u.id, u.name FROM escalation_rules r
+     LEFT JOIN team_members tm ON tm.team_id = r.target_team_id
+     JOIN users u ON u.id = COALESCE(r.target_user_id, tm.user_id)
+     WHERE r.policy_id = $1 AND r.level = $2 ORDER BY u.name`,
+    [policy[0].id, current.level]
+  );
+  for (const target of targets) {
+    const { rows } = await db.query<{ id: number }>(
+      `INSERT INTO notifications (incident_id, user_id, kind, escalation_level) VALUES ($1, $2, 'escalated', $3)
+       ON CONFLICT (incident_id, user_id, kind, escalation_level) DO NOTHING RETURNING id`,
+      [incident.id, target.id, current.level]
+    );
+    if (rows[0]) fx.deliverNotification(rows[0].id);
+  }
+
+  const { rows } = await db.query<IncidentRow>(
+    `UPDATE incidents SET escalation_level = $2,
+       next_escalation_at = CASE WHEN status = 'triggered' AND $3::int IS NOT NULL
+                                 THEN now() + make_interval(mins => $3::int) END
+     WHERE id = $1 RETURNING *`,
+    [incident.id, current.level, following?.delay_minutes ?? null]
+  );
+  const updated = rows[0];
+  if (updated.next_escalation_at) fx.escalate(updated.id);
+
+  const names = targets.map((t) => t.name).join(", ") || "nobody (empty level)";
+  await addTimeline(db, fx, updated, "escalated", `Escalated to level ${current.level}: paged ${names}`, actor, {
+    level: current.level,
+    userIds: targets.map((t) => t.id),
+    manual: true,
+  });
+  await audit(db, {
+    organizationId: updated.organization_id,
+    actorUserId: actor?.id ?? null,
+    action: "incident.escalate",
+    entityType: "incident",
+    entityId: updated.id,
+    details: { level: current.level, notified: targets.length, manual: true },
+  });
+  changed(fx, updated);
+  return updated;
+}
+
 // Drafts (or refreshes) the postmortem from the incident's data. With
 // onlyIfMissing it never touches an existing one (used on resolve); a manual
 // regenerate refreshes metrics + timeline but keeps the narrative sections

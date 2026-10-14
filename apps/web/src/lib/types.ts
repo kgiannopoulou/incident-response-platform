@@ -30,6 +30,7 @@ export type TimelineEvent = {
   id: number;
   type: string;
   message: string;
+  metadata: Record<string, unknown>;
   created_at: string;
   actor_name: string | null;
 };
@@ -38,7 +39,9 @@ export type IncidentDetail = {
   incident: IncidentSummary & {
     service_status: ServiceStatus | null;
     escalation_policy_name: string | null;
+    escalation_max_level: number | null;
     next_escalation_at: string | null;
+    mitigated_at: string | null;
     allowed_transitions: IncidentStatus[];
   };
   alerts: {

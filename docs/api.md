@@ -94,6 +94,7 @@ Incidents are addressed by their per-organization **number** (`INC-42` → `42`)
 | GET | `/incidents/:number` | — | Incident + `allowed_transitions`, alerts, timeline, responders, notifications, postmortem status |
 | POST | `/incidents/:number/status` | `{ status, message? }` | `acknowledged`, `investigating`, `mitigated` or `resolved`, state-machine checked. `409 { error, from, to, allowed }` if not allowed |
 | POST | `/incidents/:number/acknowledge` | — | Shorthand for `status: acknowledged` |
+| POST | `/incidents/:number/escalate` | — | Page the next escalation level now (also after acknowledgement). `409` when resolved, no policy, or every level already paged |
 | POST | `/incidents/:number/severity` | `{ severity }` | `sev1`–`sev4` |
 | POST | `/incidents/:number/notes` | `{ message }` | Timeline note |
 | POST | `/incidents/:number/responders` | `{ userId, role? }` | `role`: `responder` (default) or `commander` |

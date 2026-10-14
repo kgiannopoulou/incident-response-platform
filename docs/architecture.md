@@ -193,6 +193,24 @@ goes through `changeStatus()` (`apps/api/src/domain/incidents.ts`), which:
 
 The UI never decides what's allowed: the incident detail response includes `allowed_transitions`.
 
+## The incident page
+
+`apps/web/src/app/incidents/[number]/page.tsx` is the screen responders live in during an incident,
+split into `components/incident/*`:
+
+- **Header** — `INC-142`, title, status, service health, commander and a severity banner; a facts
+  strip (started, alerts + last alert, time to acknowledge / mitigate / resolve) that keeps counting
+  while open; and the actions. Status buttons are rendered from `allowed_transitions`, so a resolved
+  incident simply has none.
+- **Escalate** pages the next level of the service's escalation policy immediately
+  (`POST /incidents/:number/escalate`), including after acknowledgement, when the person on it needs
+  more hands. It reuses the same rules as automatic escalation (unique page per person per level,
+  delivery through the worker); on an unacknowledged incident the automatic schedule carries on from
+  the new level.
+- **Timeline** — oldest first, `14:02 🔴 Incident triggered … 14:13 🟢 Resolved`, with the note box
+  underneath; **responders**, **paging** (who was paged at which level, delivery state), **alerts**
+  (every grouped alert with its metadata) and the **postmortem** link alongside.
+
 ## Side effects after commit
 
 Publishing "incident created" to browsers or enqueuing a page *before* the transaction commits
