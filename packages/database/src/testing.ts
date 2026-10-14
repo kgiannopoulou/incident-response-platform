@@ -47,7 +47,8 @@ export type Fixtures = Awaited<ReturnType<typeof resetFixtures>>;
 
 // Wipes every table and inserts a small, known world:
 //   org "acme": alex (admin), sam + jordan (responders), team Payments
-//     (alex, sam), policy L1 sam -> L2 alex (+1m) -> L3 team Payments (+1m)
+//     (alex, sam), policy "Payments on-call": step 1 sam (0 min) -> step 2
+//     alex (1 min) -> step 3 team Payments (2 min), minutes since trigger
 //     services: checkout-api (policy, auto_resolve, "suppress staging" rule)
 //               auth-service (no policy)
 //   org "other": eve (admin), service other-api — for tenancy tests
@@ -59,8 +60,8 @@ export async function resetFixtures(pool: pg.Pool) {
 
   await pool.query(`
     TRUNCATE audit_log, api_keys, postmortems, notifications, timeline_events, incident_responders,
-      incident_alerts, alerts, incidents, alert_rules, services, escalation_rules,
-      escalation_policies, team_members, teams, organization_members, users, organizations
+      incident_alerts, alerts, incidents, alert_rules, services, escalation_step_targets,
+      escalation_steps, escalation_policies, team_members, teams, organization_members, users, organizations
     RESTART IDENTITY CASCADE
   `);
 
@@ -92,11 +93,20 @@ export async function resetFixtures(pool: pg.Pool) {
     `INSERT INTO escalation_policies (organization_id, name) VALUES ($1, 'Payments on-call') RETURNING id`,
     [acme.id]
   );
-  await pool.query(
-    `INSERT INTO escalation_rules (policy_id, level, delay_minutes, target_user_id, target_team_id) VALUES
-     ($1, 1, 0, $2, NULL), ($1, 2, 1, $3, NULL), ($1, 3, 1, NULL, $4)`,
-    [policy.id, sam, alex, team.id]
-  );
+  for (const [position, delay, type, targetId] of [
+    [1, 0, "user", sam],
+    [2, 1, "user", alex],
+    [3, 2, "team", team.id],
+  ] as const) {
+    const step = await q(
+      `INSERT INTO escalation_steps (policy_id, position, delay_minutes) VALUES ($1, $2, $3) RETURNING id`,
+      [policy.id, position, delay]
+    );
+    await pool.query(
+      `INSERT INTO escalation_step_targets (step_id, target_type, user_id, team_id) VALUES ($1, $2, $3, $4)`,
+      [step.id, type, type === "user" ? targetId : null, type === "team" ? targetId : null]
+    );
+  }
 
   const keyIds: Record<string, number> = {};
   const service = async (

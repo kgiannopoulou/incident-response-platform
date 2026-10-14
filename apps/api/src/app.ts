@@ -6,6 +6,7 @@ import { requireAuth } from "./lib/auth";
 import { errorHandler } from "./lib/http";
 import { alertsRouter } from "./routes/alerts";
 import { authRouter } from "./routes/auth";
+import { escalationPoliciesRouter } from "./routes/escalation-policies";
 import { incidentsRouter } from "./routes/incidents";
 import { orgRouter } from "./routes/org";
 import { servicesRouter } from "./routes/services";
@@ -37,6 +38,7 @@ export function createApp(deps: Deps) {
   v1.use(requireAuth(deps.jwtSecret));
   v1.use("/incidents", incidentsRouter(deps));
   v1.use("/services", servicesRouter(deps));
+  v1.use("/escalation-policies", escalationPoliciesRouter(deps));
   v1.use("/", orgRouter(deps));
   app.use("/api/v1", v1);
 

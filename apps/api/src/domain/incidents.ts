@@ -1,4 +1,4 @@
-import type { PoolClient } from "@irp/database";
+import { pageNextEscalationStep, type PoolClient } from "@irp/database";
 import {
   type AlertSeverity,
   assertTransition,
@@ -135,15 +135,15 @@ export async function createIncident(db: PoolClient, fx: Effects, input: NewInci
     [input.organizationId]
   );
 
-  // Level 1 of the service's escalation policy is due after its own delay
+  // Step 1 of the service's escalation policy is due after its own delay
   // (normally 0 — page immediately). No policy, no escalation.
   const { rows } = await db.query<IncidentRow>(
     `INSERT INTO incidents (organization_id, number, service_id, title, severity, dedup_key,
                             created_by, commander_id, next_escalation_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $7,
-       (SELECT now() + make_interval(mins => r.delay_minutes)
-        FROM services s JOIN escalation_rules r ON r.policy_id = s.escalation_policy_id
-        WHERE s.id = $3 ORDER BY r.level LIMIT 1))
+       (SELECT now() + make_interval(mins => st.delay_minutes)
+        FROM services s JOIN escalation_steps st ON st.policy_id = s.escalation_policy_id
+        WHERE s.id = $3 ORDER BY st.position LIMIT 1))
      ON CONFLICT (service_id, dedup_key) WHERE status <> 'resolved' AND dedup_key IS NOT NULL
      DO NOTHING
      RETURNING *`,
@@ -294,11 +294,12 @@ export async function changeSeverity(
   return rows[0];
 }
 
-// "Escalate" button: pages the next level of the service's escalation policy
+// "Escalate" button: pages the next step of the service's escalation policy
 // right now, without waiting for its delay — also after acknowledgement,
 // when the responder on it needs more hands. Pages are rows delivered by the
 // worker (fx.deliverNotification); while the incident is still unacknowledged
-// the automatic schedule continues from the new level.
+// the automatic schedule continues with the following step, still anchored
+// to when the incident triggered.
 export async function escalateNow(db: PoolClient, fx: Effects, incident: IncidentRow, actor: Actor) {
   if (incident.status === "resolved") throw new HttpError(409, "Resolved incidents can't be escalated");
   const { rows: policy } = await db.query<{ id: number }>(
@@ -307,45 +308,19 @@ export async function escalateNow(db: PoolClient, fx: Effects, incident: Inciden
   );
   if (!policy[0]) throw new HttpError(409, "This incident's service has no escalation policy");
 
-  const { rows: levels } = await db.query<{ level: number; delay_minutes: number }>(
-    `SELECT DISTINCT level, delay_minutes FROM escalation_rules WHERE policy_id = $1 AND level > $2 ORDER BY level`,
-    [policy[0].id, incident.escalation_level]
-  );
-  const [current, following] = levels;
-  if (!current) {
+  const paged = await pageNextEscalationStep(db, incident, policy[0].id, { manual: true });
+  if (!paged) {
     throw new HttpError(409, `Already escalated to the last level (L${incident.escalation_level}) of the policy`);
   }
-
-  const { rows: targets } = await db.query<{ id: number; name: string }>(
-    `SELECT DISTINCT u.id, u.name FROM escalation_rules r
-     LEFT JOIN team_members tm ON tm.team_id = r.target_team_id
-     JOIN users u ON u.id = COALESCE(r.target_user_id, tm.user_id)
-     WHERE r.policy_id = $1 AND r.level = $2 ORDER BY u.name`,
-    [policy[0].id, current.level]
-  );
-  for (const target of targets) {
-    const { rows } = await db.query<{ id: number }>(
-      `INSERT INTO notifications (incident_id, user_id, kind, escalation_level) VALUES ($1, $2, 'escalated', $3)
-       ON CONFLICT (incident_id, user_id, kind, escalation_level) DO NOTHING RETURNING id`,
-      [incident.id, target.id, current.level]
-    );
-    if (rows[0]) fx.deliverNotification(rows[0].id);
-  }
-
-  const { rows } = await db.query<IncidentRow>(
-    `UPDATE incidents SET escalation_level = $2,
-       next_escalation_at = CASE WHEN status = 'triggered' AND $3::int IS NOT NULL
-                                 THEN now() + make_interval(mins => $3::int) END
-     WHERE id = $1 RETURNING *`,
-    [incident.id, current.level, following?.delay_minutes ?? null]
-  );
+  paged.notificationIds.forEach((id) => fx.deliverNotification(id));
+  const { rows } = await db.query<IncidentRow>(`SELECT * FROM incidents WHERE id = $1`, [incident.id]);
   const updated = rows[0];
   if (updated.next_escalation_at) fx.escalate(updated.id);
 
-  const names = targets.map((t) => t.name).join(", ") || "nobody (empty level)";
-  await addTimeline(db, fx, updated, "INCIDENT_ESCALATED", `Escalated to level ${current.level}: paged ${names}`, actor, {
-    level: current.level,
-    userIds: targets.map((t) => t.id),
+  const names = paged.recipients.map((t) => t.name).join(", ") || "nobody (empty step)";
+  await addTimeline(db, fx, updated, "INCIDENT_ESCALATED", `Escalated to level ${paged.level}: paged ${names}`, actor, {
+    level: paged.level,
+    userIds: paged.recipients.map((t) => t.id),
     manual: true,
   });
   await audit(db, {
@@ -354,7 +329,7 @@ export async function escalateNow(db: PoolClient, fx: Effects, incident: Inciden
     action: "incident.escalate",
     entityType: "incident",
     entityId: updated.id,
-    details: { level: current.level, notified: targets.length, manual: true },
+    details: { level: paged.level, notified: paged.recipients.length, manual: true },
   });
   changed(fx, updated, actor);
   return updated;

@@ -286,6 +286,37 @@ risks announcing something that then rolls back. Domain functions therefore reco
 
 The opposite failure — commit succeeded, process died before flushing — is covered by the next point.
 
+## Escalation policies
+
+```
+Checkout escalation                       escalation_policies
+  0 min                         → Payments team      │ 1..n, ordered by position
+  2 min without acknowledgement → Alex (team lead)   ▼
+  5 min without acknowledgement → Riley (eng. mgr)  escalation_steps (position, delay_minutes)
+                                                     │ 1..n
+                                                     ▼
+                                                    escalation_step_targets (target_type user|team)
+```
+
+- **Delays are measured from the trigger time**, not from the previous step. The policy then reads
+  top to bottom exactly as people describe it ("after 10 minutes the manager gets paged"), and one
+  late page (a worker restart) doesn't push every later step back. A step whose time has already
+  passed is due immediately (`escalationDueAt()`).
+- **Targets are users or teams.** The API speaks `{ targetType, targetId }`; the table keeps one real
+  foreign key per type plus a `CHECK`, rather than a polymorphic id, so deleting a user or team can't
+  leave a dangling target. A team target pages every member; someone reachable through two targets
+  of the same step is paged once.
+- **Validation in one place.** `escalationPolicySchema` (`@irp/shared`) requires 1–10 steps with
+  strictly increasing delays and no duplicate targets; the API additionally checks every target
+  belongs to the caller's organization. A `UNIQUE (policy_id, delay_minutes)` backs the ordering rule.
+- **Whole-policy writes.** `PUT` replaces name, description and all steps in one transaction and
+  one audit entry, so a policy is never observed half-edited and the audit log says exactly what it
+  became.
+- **One paging routine.** Automatic escalation (worker), the *Escalate* button (API) and, later,
+  acknowledgement timeouts all call `pageNextEscalationStep()` in `@irp/database`, which creates the
+  notification rows, advances `escalation_level` and schedules the following step.
+- A policy can't be deleted while a service uses it (`409` naming the services).
+
 ## Postgres as the source of truth for paging
 
 A queue is a great trigger and a poor ledger. So:
@@ -386,5 +417,5 @@ narrative a responder has written.
 - **Anchor the timeline hash chain** externally (e.g. publish each incident's head hash to a write-once
   store) so even a database superuser can't rewrite history undetected.
 - **Scoped keys** (trigger-only vs. resolve) and per-organization quotas on top of per-key limits.
-- **On-call schedules** as escalation targets; email/SMS channels.
+- **On-call schedules** (rotations) as a third escalation target type next to users and teams.
 - **OpenTelemetry** traces across API → queue → worker.

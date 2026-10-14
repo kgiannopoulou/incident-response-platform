@@ -1,21 +1,21 @@
 "use client";
 
+import Link from "next/link";
 import { Fragment, useState, type FormEvent } from "react";
+import { describeEscalationDelay } from "@irp/shared";
 import { ApiKeysPanel, NewKeyBanner } from "@/components/api-keys-panel";
 import { Button, Card, ErrorState, inputClass, Loading, ServiceStatusPill } from "@/components/ui";
 import { patch, post } from "@/lib/api";
 import { useUser } from "@/lib/auth";
 import { timeAgo } from "@/lib/format";
 import { useApi } from "@/lib/use-api";
-import type { NewApiKey, Service } from "@/lib/types";
-
-type Policy = { id: number; name: string; rules: { level: number; delayMinutes: number; target: string }[] };
+import type { EscalationPolicy, NewApiKey, Service } from "@/lib/types";
 
 export default function ServicesPage() {
   const user = useUser();
   const isAdmin = user?.role === "admin";
   const services = useApi<{ services: Service[] }>("/services", (e) => e.type === "service.updated" || e.type.startsWith("incident."));
-  const policies = useApi<{ policies: Policy[] }>("/escalation-policies");
+  const policies = useApi<{ policies: EscalationPolicy[] }>("/escalation-policies");
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<{ service: Service; apiKey: NewApiKey } | null>(null);
   const [openKeys, setOpenKeys] = useState<number | null>(null);
@@ -122,7 +122,14 @@ export default function ServicesPage() {
       </Card>
 
       <div className="grid gap-5 lg:grid-cols-2">
-        <Card title="Escalation policies">
+        <Card
+          title="Escalation policies"
+          actions={
+            <Link href="/escalation-policies" className="text-xs text-zinc-400 hover:text-zinc-100">
+              Manage →
+            </Link>
+          }
+        >
           {policies.error ? (
             <ErrorState message={policies.error} onRetry={policies.reload} />
           ) : policies.loading ? (
@@ -133,10 +140,10 @@ export default function ServicesPage() {
                 <li key={p.id}>
                   <p className="font-medium text-zinc-200">{p.name}</p>
                   <ol className="mt-1 space-y-0.5 text-zinc-400">
-                    {p.rules.map((r) => (
-                      <li key={r.level}>
-                        L{r.level}: {r.target}
-                        {r.level > 1 && <span className="text-zinc-500"> — after {r.delayMinutes} min unacknowledged</span>}
+                    {p.steps.map((step) => (
+                      <li key={step.position}>
+                        L{step.position}: {step.targets.map((t) => (t.targetType === "team" ? `Team ${t.name}` : t.name)).join(", ")}
+                        <span className="text-zinc-500"> — {describeEscalationDelay(step.delayMinutes).toLowerCase()}</span>
                       </li>
                     ))}
                   </ol>

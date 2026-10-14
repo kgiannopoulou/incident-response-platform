@@ -2,9 +2,10 @@
 // --if-empty), so it is safe to re-run but must never point at a real database.
 //
 // Logins (password for all: "password123"):
-//   alex@acme.test   — admin, Payments team
+//   alex@acme.test   — admin, team lead (Platform team)
 //   sam@acme.test    — responder, Payments team (first on call)
-//   jordan@acme.test — responder, Platform team
+//   jordan@acme.test — responder, Payments + Platform teams
+//   riley@acme.test  — responder, engineering manager (last escalation step)
 //
 // Service slugs and API keys (send alerts with `Authorization: Bearer <key>`):
 //   checkout-api       ir_live_dev_checkout_api
@@ -30,8 +31,8 @@ async function main() {
   await withTransaction(pool, async (db) => {
     await db.query(`
       TRUNCATE audit_log, api_keys, postmortems, notifications, timeline_events, incident_responders,
-        incident_alerts, alerts, incidents, alert_rules, services, escalation_rules,
-        escalation_policies, team_members, teams, organization_members, users, organizations
+        incident_alerts, alerts, incidents, alert_rules, services, escalation_step_targets,
+        escalation_steps, escalation_policies, team_members, teams, organization_members, users, organizations
       RESTART IDENTITY CASCADE
     `);
 
@@ -47,6 +48,7 @@ async function main() {
       ["alex", "Alex Morgan", "admin"],
       ["sam", "Sam Rivera", "responder"],
       ["jordan", "Jordan Lee", "responder"],
+      ["riley", "Riley Chen", "responder"],
     ] as const) {
       const { rows } = await db.query(
         `INSERT INTO users (email, name, password_hash) VALUES ($1, $2, $3) RETURNING id`,
@@ -69,32 +71,39 @@ async function main() {
       }
       return rows[0].id as number;
     };
-    const payments = await team("Payments", [users.alex, users.sam]);
+    const payments = await team("Payments", [users.sam, users.jordan]);
     const platform = await team("Platform", [users.jordan, users.alex]);
 
-    // Short delays so escalation is visible in a demo.
-    const policy = async (name: string, levels: { delay: number; user?: number; team?: number }[]) => {
+    // Delays are minutes since the incident triggered. They're short so
+    // escalation is visible in a demo; a real policy would use 5 / 10 / 15.
+    type Target = { user?: number; team?: number };
+    const policy = async (name: string, description: string, steps: { delay: number; targets: Target[] }[]) => {
       const { rows } = await db.query(
-        `INSERT INTO escalation_policies (organization_id, name) VALUES ($1, $2) RETURNING id`,
-        [org.id, name]
+        `INSERT INTO escalation_policies (organization_id, name, description) VALUES ($1, $2, $3) RETURNING id`,
+        [org.id, name, description]
       );
-      for (const [i, level] of levels.entries()) {
-        await db.query(
-          `INSERT INTO escalation_rules (policy_id, level, delay_minutes, target_user_id, target_team_id)
-           VALUES ($1, $2, $3, $4, $5)`,
-          [rows[0].id, i + 1, level.delay, level.user ?? null, level.team ?? null]
+      for (const [i, step] of steps.entries()) {
+        const { rows: stepRows } = await db.query(
+          `INSERT INTO escalation_steps (policy_id, position, delay_minutes) VALUES ($1, $2, $3) RETURNING id`,
+          [rows[0].id, i + 1, step.delay]
         );
+        for (const target of step.targets) {
+          await db.query(
+            `INSERT INTO escalation_step_targets (step_id, target_type, user_id, team_id) VALUES ($1, $2, $3, $4)`,
+            [stepRows[0].id, target.user ? "user" : "team", target.user ?? null, target.team ?? null]
+          );
+        }
       }
       return rows[0].id as number;
     };
-    const paymentsPolicy = await policy("Payments on-call", [
-      { delay: 0, user: users.sam },
-      { delay: 2, user: users.alex },
-      { delay: 5, team: payments },
+    const paymentsPolicy = await policy("Checkout escalation", "Payments team first, then the team lead, then engineering management", [
+      { delay: 0, targets: [{ team: payments }] },
+      { delay: 2, targets: [{ user: users.alex }] },
+      { delay: 5, targets: [{ user: users.riley }] },
     ]);
-    const platformPolicy = await policy("Platform on-call", [
-      { delay: 0, user: users.jordan },
-      { delay: 3, user: users.alex },
+    const platformPolicy = await policy("Platform on-call", "Platform engineer on call, then the team lead", [
+      { delay: 0, targets: [{ user: users.jordan }] },
+      { delay: 3, targets: [{ user: users.alex }] },
     ]);
 
     // Each service gets one API key. Real keys are random (generateApiKey);

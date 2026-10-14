@@ -97,7 +97,7 @@ notes) until they switch to responder.
 | GET | `/incidents/:number/timeline` | — | Append-only timeline (`event_type`, `actor_id`, `metadata`, `prev_hash`, `hash`) + `integrity: { valid, events, first_invalid_id }`. No endpoint edits or deletes events |
 | POST | `/incidents/:number/status` | `{ status, message? }` | `acknowledged`, `investigating`, `mitigated` or `resolved`, state-machine checked. `409 { error, from, to, allowed }` if not allowed |
 | POST | `/incidents/:number/acknowledge` | — | Shorthand for `status: acknowledged` |
-| POST | `/incidents/:number/escalate` | — | Page the next escalation level now (also after acknowledgement). `409` when resolved, no policy, or every level already paged |
+| POST | `/incidents/:number/escalate` | — | Page the next escalation step now (also after acknowledgement); the automatic schedule continues from there, still anchored to the trigger time. `409` when resolved, no policy, or every level already paged |
 | POST | `/incidents/:number/severity` | `{ severity }` | `sev1`–`sev4` |
 | POST | `/incidents/:number/notes` | `{ message }` | Timeline note |
 | POST | `/incidents/:number/responders` | `{ userId?, role? }` | Join (omit `userId`) or add someone; `role`: `responder` (default), `observer` or `commander`. `201`, or `200 { changed: false }` if nothing changed |
@@ -134,13 +134,35 @@ stores a SHA-256 hash and a display prefix (`ir_live_a8f83e7c`).
 
 `last_used_at` has one-minute resolution: it is written at most once a minute per key.
 
+## Escalation policies
+
+| Method | Path | Body | Notes |
+| --- | --- | --- | --- |
+| GET | `/escalation-policies` | — | Every policy with its ordered `steps` (`position`, `delayMinutes`, `targets[{ targetType, targetId, name }]`) and the `services` using it |
+| GET | `/escalation-policies/:id` | — | One policy |
+| POST | `/escalation-policies` | `{ name, description?, steps: [{ delayMinutes, targets: [{ targetType: "user" \| "team", targetId }] }] }` | Admin. 1–10 steps, delays strictly increasing (0–1440), 1–10 targets per step, no duplicates; targets must be in your organization. `409` on a duplicate name |
+| PUT | `/escalation-policies/:id` | same as POST | Admin. Replaces name, description and **all** steps in one transaction |
+| DELETE | `/escalation-policies/:id` | — | Admin. `409` while a service still uses the policy |
+
+`delayMinutes` counts from when the incident **triggered**, not from the previous step:
+
+```json
+{
+  "name": "Checkout escalation",
+  "steps": [
+    { "delayMinutes": 0,  "targets": [{ "targetType": "team", "targetId": 1 }] },
+    { "delayMinutes": 5,  "targets": [{ "targetType": "user", "targetId": 2 }] },
+    { "delayMinutes": 10, "targets": [{ "targetType": "user", "targetId": 4 }] }
+  ]
+}
+```
+
 ## Organization
 
 | Method | Path | Notes |
 | --- | --- | --- |
 | GET | `/users` | Members of your organization |
 | GET | `/teams` | With members |
-| GET | `/escalation-policies` | With levels |
 | GET | `/stats` | Open / unacknowledged counts, 30-day MTTA and MTTR |
 | GET | `/audit-log?before=<id>` | Admin only; 50 per page, keyset pagination via `nextBefore` |
 | GET | `/stream` | Server-Sent Events: `incident.created`, `incident.updated`, `timeline.added`, `service.updated`, `alert.received` |

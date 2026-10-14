@@ -3,8 +3,8 @@ import type { Deps } from "../deps";
 import { isStreamId } from "@irp/shared/realtime";
 import { requireAdmin } from "../lib/auth";
 
-// Read-only organization data: people, teams, escalation policies, the
-// audit trail and response metrics for the dashboard.
+// Read-only organization data: people, teams, the audit trail and response
+// metrics for the dashboard.
 export function orgRouter(deps: Deps) {
   const router = Router();
 
@@ -31,24 +31,6 @@ export function orgRouter(deps: Deps) {
       [req.user!.organizationId]
     );
     res.json({ teams: rows });
-  });
-
-  router.get("/escalation-policies", async (req, res) => {
-    const { rows } = await deps.pool.query(
-      `SELECT p.id, p.name,
-              COALESCE(json_agg(json_build_object(
-                'level', r.level, 'delayMinutes', r.delay_minutes,
-                'target', COALESCE(u.name, 'Team ' || t.name)) ORDER BY r.level)
-                FILTER (WHERE r.id IS NOT NULL), '[]') AS rules
-       FROM escalation_policies p
-       LEFT JOIN escalation_rules r ON r.policy_id = p.id
-       LEFT JOIN users u ON u.id = r.target_user_id
-       LEFT JOIN teams t ON t.id = r.target_team_id
-       WHERE p.organization_id = $1
-       GROUP BY p.id ORDER BY p.name`,
-      [req.user!.organizationId]
-    );
-    res.json({ policies: rows });
   });
 
   // Keyset pagination (`before` = last id seen) so the log stays fast as it grows.

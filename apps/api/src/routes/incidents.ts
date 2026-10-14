@@ -103,7 +103,7 @@ export function incidentsRouter(deps: Deps) {
     const { rows } = await deps.pool.query(
       `SELECT i.*, s.name AS service_name, s.status AS service_status, u.name AS commander_name,
               ep.name AS escalation_policy_name,
-              (SELECT max(level) FROM escalation_rules r WHERE r.policy_id = ep.id) AS escalation_max_level
+              (SELECT max(position) FROM escalation_steps st WHERE st.policy_id = ep.id) AS escalation_max_level
        FROM incidents i
        LEFT JOIN services s ON s.id = i.service_id
        LEFT JOIN escalation_policies ep ON ep.id = s.escalation_policy_id

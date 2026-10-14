@@ -1,8 +1,8 @@
-import { withTransaction } from "@irp/database";
+import { pageNextEscalationStep, withTransaction } from "@irp/database";
 import { deliverJobOptions, shouldEscalate, type IncidentStatus } from "@irp/shared";
 import { publish, type WorkerContext } from "./context";
 
-// Pages the next level of an incident's escalation policy, if it's due.
+// Pages the next step of an incident's escalation policy, if it's due.
 //
 // Idempotent and safe to call any number of times, from the queue job or
 // from the sweeper: it works off the row-locked incident's
@@ -17,11 +17,12 @@ export async function escalateIncident(ctx: WorkerContext, incidentId: number) {
       number: number;
       status: IncidentStatus;
       escalation_level: number;
+      triggered_at: Date;
       next_escalation_at: Date | null;
       policy_id: number | null;
       due: boolean;
     }>(
-      `SELECT i.id, i.organization_id, i.number, i.status, i.escalation_level, i.next_escalation_at,
+      `SELECT i.id, i.organization_id, i.number, i.status, i.escalation_level, i.triggered_at, i.next_escalation_at,
               s.escalation_policy_id AS policy_id, (i.next_escalation_at <= now()) AS due
        FROM incidents i LEFT JOIN services s ON s.id = i.service_id
        WHERE i.id = $1 FOR UPDATE OF i`,
@@ -35,12 +36,8 @@ export async function escalateIncident(ctx: WorkerContext, incidentId: number) {
     }
     if (!incident.due) return { incident, notificationIds: [], nextAt: incident.next_escalation_at, paged: false };
 
-    const { rows: levels } = await db.query<{ level: number; delay_minutes: number }>(
-      `SELECT DISTINCT level, delay_minutes FROM escalation_rules WHERE policy_id = $1 AND level > $2 ORDER BY level`,
-      [incident.policy_id, incident.escalation_level]
-    );
-    const current = levels[0];
-    if (!current) {
+    const paged = await pageNextEscalationStep(db, incident, incident.policy_id);
+    if (!paged) {
       await db.query(`UPDATE incidents SET next_escalation_at = NULL WHERE id = $1`, [incidentId]);
       await db.query(
         `INSERT INTO timeline_events (incident_id, event_type, message) VALUES ($1, 'INCIDENT_ESCALATED', $2)`,
@@ -49,63 +46,29 @@ export async function escalateIncident(ctx: WorkerContext, incidentId: number) {
       return { incident, notificationIds: [], nextAt: null, paged: true };
     }
 
-    // Everyone targeted at this level: direct users plus team members.
-    const { rows: targets } = await db.query<{ id: number; name: string }>(
-      `SELECT DISTINCT u.id, u.name FROM escalation_rules r
-       LEFT JOIN team_members tm ON tm.team_id = r.target_team_id
-       JOIN users u ON u.id = COALESCE(r.target_user_id, tm.user_id)
-       WHERE r.policy_id = $1 AND r.level = $2
-       ORDER BY u.name`,
-      [incident.policy_id, current.level]
-    );
-
     const isFirst = incident.escalation_level === 0;
-    const notificationIds: number[] = [];
-    for (const target of targets) {
-      // The unique index makes a retried escalation step page nobody twice.
-      const { rows: inserted } = await db.query<{ id: number }>(
-        `INSERT INTO notifications (incident_id, user_id, kind, escalation_level)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (incident_id, user_id, kind, escalation_level) DO NOTHING RETURNING id`,
-        [incidentId, target.id, isFirst ? "triggered" : "escalated", current.level]
-      );
-      if (inserted[0]) notificationIds.push(inserted[0].id);
-    }
-
-    const names = targets.map((t) => t.name).join(", ") || "nobody (empty level)";
+    const names = paged.recipients.map((t) => t.name).join(", ") || "nobody (empty step)";
     await db.query(`INSERT INTO timeline_events (incident_id, event_type, message, metadata) VALUES ($1, $2, $3, $4)`, [
       incidentId,
       isFirst ? "NOTIFICATION_SENT" : "INCIDENT_ESCALATED",
       isFirst
-        ? `Paged ${names} (escalation level ${current.level})`
-        : `Not acknowledged — escalated to level ${current.level}: paged ${names}`,
-      JSON.stringify({ level: current.level, userIds: targets.map((t) => t.id) }),
+        ? `Paged ${names} (escalation level ${paged.level})`
+        : `Not acknowledged — escalated to level ${paged.level}: paged ${names}`,
+      JSON.stringify({ level: paged.level, userIds: paged.recipients.map((t) => t.id) }),
     ]);
-
-    const following = levels[1];
-    const { rows: updated } = await db.query<{ next_escalation_at: Date | null }>(
-      `UPDATE incidents SET escalation_level = $2,
-         next_escalation_at = CASE WHEN $3::int IS NULL THEN NULL ELSE now() + make_interval(mins => $3::int) END
-       WHERE id = $1 RETURNING next_escalation_at`,
-      [incidentId, current.level, following ? following.delay_minutes : null]
-    );
     await db.query(
       `INSERT INTO audit_log (organization_id, action, entity_type, entity_id, details)
        VALUES ($1, 'incident.escalate', 'incident', $2, $3)`,
-      [incident.organization_id, incidentId, JSON.stringify({ level: current.level, notified: targets.length })]
+      [incident.organization_id, incidentId, JSON.stringify({ level: paged.level, notified: paged.recipients.length })]
     );
-    return { incident, notificationIds, nextAt: updated[0].next_escalation_at, paged: true };
+    return { incident, notificationIds: paged.notificationIds, nextAt: paged.nextEscalationAt, paged: true };
   });
 
   if (!outcome) return { paged: false, notifications: 0 };
 
-  // After COMMIT: deliver pages, schedule the next level, tell browsers.
+  // After COMMIT: deliver pages, schedule the next step, tell browsers.
   for (const id of outcome.notificationIds) {
-    await ctx.notificationsQueue.add(
-      "deliver",
-      { notificationId: id },
-      deliverJobOptions(id)
-    );
+    await ctx.notificationsQueue.add("deliver", { notificationId: id }, deliverJobOptions(id));
   }
   if (outcome.nextAt) {
     await ctx.escalationsQueue.add(

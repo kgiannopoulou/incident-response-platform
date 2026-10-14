@@ -151,3 +151,16 @@ export type Postmortem = {
   severity: IncidentSeverity;
   service_name: string | null;
 };
+
+export type EscalationPolicy = {
+  id: number;
+  name: string;
+  description: string;
+  steps: {
+    position: number;
+    delayMinutes: number;
+    targets: { targetType: "user" | "team"; targetId: number; name: string }[];
+  }[];
+  services: { id: number; name: string }[];
+  updated_at: string;
+};

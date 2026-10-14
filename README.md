@@ -76,8 +76,11 @@ Monitoring tool / app ──POST /api/v1/alerts──► API key (hashed lookup)
 - **Responders with roles** — *Incident Commander* (exactly one, enforced by a partial unique index),
   *Responders* and read-only *Observers*. Join, observe, switch, leave; the commander (or an admin)
   hands over command and manages people. Every change lands on the timeline.
-- **Escalation policies** — multi-level, users or whole teams, per-level delays; acknowledging stops
-  the automatic schedule, *Escalate* pages the next level immediately.
+- **Escalation policies** — ordered steps (`0 min → Backend team`, `5 min without acknowledgement →
+  team lead`, `10 min → engineering manager`), each paging users and/or whole teams, with delays
+  anchored to when the incident triggered. Full CRUD API with validation (strictly increasing delays,
+  same-organization targets) and an editor that draws the chain; acknowledging stops it, *Escalate*
+  pages the next step immediately.
 - **Notifications** via a background worker (BullMQ) with retries/backoff; delivered to a
   Slack-compatible webhook, or logged when none is configured.
 - **Live alert feed** (🔴 CRITICAL · 🟠 HIGH · 🟡 WARNING · 🔵 INFO, "12 sec ago") and **real-time
@@ -180,7 +183,7 @@ npm run dev:web                 # http://localhost:3000
 ```
 
 Sign in at http://localhost:3000 as **alex@acme.test** / **password123** (admin);
-`sam@acme.test` and `jordan@acme.test` are responders. These are local demo accounts only.
+`sam@acme.test`, `jordan@acme.test` and `riley@acme.test` are responders. These are local demo accounts only.
 
 Or run everything in containers: `docker compose --profile app up --build`
 (migrates and seeds an empty database on first start).
@@ -194,8 +197,8 @@ npm run simulate -- noise       # INFO/WARNING (recorded), staging alert (suppre
 npm run simulate -- recover     # monitoring clears the alerts → Checkout auto-resolves
 ```
 
-Watch the dashboard update live, see Sam paged in the worker log, wait two minutes without
-acknowledging to watch it escalate to Alex, then acknowledge, add notes, resolve, and open the
+Watch the dashboard update live, see the Payments team (Sam, Jordan) paged in the worker log, wait
+two minutes without acknowledging to watch it escalate to Alex (and at five minutes to Riley), then acknowledge, add notes, resolve, and open the
 generated postmortem.
 
 Sending an alert from anything that speaks HTTP (the seeded `checkout-api` service's dev key):
@@ -241,7 +244,8 @@ erDiagram
   organizations ||--o{ teams : has
   teams ||--o{ team_members : has
   organizations ||--o{ escalation_policies : has
-  escalation_policies ||--o{ escalation_rules : "levels"
+  escalation_policies ||--o{ escalation_steps : "ordered steps"
+  escalation_steps ||--o{ escalation_step_targets : "users / teams"
   organizations ||--o{ services : has
   services ||--o{ alert_rules : "ordered rules"
   services ||--o{ alerts : receives
@@ -283,6 +287,8 @@ npm run lint
   hand-overs, read-only observers, permissions). The API-key suite checks that the plaintext key appears
   nowhere in the database, rotation grace periods and expiry, immediate revocation, throttled
   last-used timestamps, per-key token buckets with headers, and the bad-key IP lock-out.
+- **Phases 11–15**: **escalation policies** (CRUD, admin-only writes, ordering/target validation,
+  tenant isolation, delete refused while in use, steps scheduled from the trigger time).
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs typecheck, lint, all tests
 against Postgres/Redis service containers, the web production build, and the Docker image build.
