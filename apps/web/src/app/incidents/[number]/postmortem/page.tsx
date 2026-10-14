@@ -58,7 +58,7 @@ const TIMELINE_ICON: Record<string, string> = {
   INCIDENT_RESOLVED: "✅",
 };
 
-const hhmm = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const hhmm = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -222,7 +222,7 @@ export default function PostmortemPage() {
           <Fact label="Duration">
             {formatDurationLong(m.durationSeconds ?? m.timeToResolveSeconds ?? null)}
             <span className="block text-xs text-zinc-500">
-              {dateTime(p.triggered_at)} → {p.resolved_at ? hhmm(p.resolved_at) : "…"}
+              {new Date(p.triggered_at).toLocaleDateString([], { dateStyle: "medium" })} · {hhmm(p.triggered_at)} → {p.resolved_at ? hhmm(p.resolved_at) : "…"}
             </span>
           </Fact>
           <Fact label="Severity">{sevLabel(p.severity)}</Fact>

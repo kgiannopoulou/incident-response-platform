@@ -218,7 +218,7 @@ export function buildPostmortemDraft(input: PostmortemInput): PostmortemDraft {
   const well: string[] = [];
   const poorly: string[] = [];
   if (alerts.length > 0) well.push(`Monitoring detected it: ${firstAlert!.source} alerted at ${hhmm(firstAlert!.receivedAt)} UTC.`);
-  if (metrics.timeToAcknowledgeSeconds !== null && metrics.timeToAcknowledgeSeconds <= 5 * 60) {
+  if (metrics.timeToAcknowledgeSeconds !== null && metrics.timeToAcknowledgeSeconds <= 5 * 60 && metrics.ackTimeouts === 0) {
     well.push(`Acknowledged within ${formatDuration(metrics.timeToAcknowledgeSeconds)}.`);
   }
   if (incident.mitigatedAt && incident.resolvedAt && incident.mitigatedAt < incident.resolvedAt) {

@@ -75,6 +75,13 @@ describe("buildPostmortemDraft", () => {
     expect(draft.whatWentPoorly).toContain("Time to acknowledge was 20m 0s.");
   });
 
+  it("doesn't praise a quick acknowledgement that came after a missed ack timeout", () => {
+    const quick = { ...input, incident: { ...input.incident, acknowledgedAt: t(3) } };
+    expect(buildPostmortemDraft(quick).whatWentWell).not.toContain("Acknowledged within");
+    const clean = { ...quick, timeline: quick.timeline.filter((e) => e.type !== "ACK_TIMEOUT") };
+    expect(buildPostmortemDraft(clean).whatWentWell).toContain("- Acknowledged within 3m 0s.");
+  });
+
   it("suggests action items with stable ids", () => {
     const items = draft.actionItems.map((a) => a.description).join("\n");
     expect(items).toMatch(/escalated 1 time/);

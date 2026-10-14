@@ -70,7 +70,13 @@ export async function deliverWebhook(ctx: WorkerContext, deliveryId: number, isF
     if (status < 200 || status >= 300) throw new Error(`Receiver answered HTTP ${status}`);
   } catch (err) {
     const permanent = err instanceof PermanentWebhookError;
-    const message = (err as Error).name === "TimeoutError" ? `Timed out after ${TIMEOUT_MS / 1000}s` : (err as Error).message;
+    // fetch reports network failures as "fetch failed" with the reason in `cause`.
+    const reason = (err as { cause?: { code?: string; message?: string } }).cause;
+    const cause = reason?.code ?? reason?.message;
+    const message =
+      (err as Error).name === "TimeoutError"
+        ? `Timed out after ${TIMEOUT_MS / 1000}s`
+        : `${(err as Error).message}${cause ? ` (${cause})` : ""}`;
     await ctx.pool.query(
       `UPDATE webhook_deliveries SET attempts = attempts + 1, last_error = $2, response_status = $3, duration_ms = $4,
               status = CASE WHEN $5 THEN 'failed' ELSE status END

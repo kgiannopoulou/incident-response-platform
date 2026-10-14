@@ -171,6 +171,18 @@ describe("deliverWebhook", () => {
     expect((await pool.query(`SELECT status FROM webhook_deliveries`)).rows[0].status).toBe("failed");
   });
 
+  it("names the network error when the receiver is unreachable", async () => {
+    const id = await openIncident();
+    // A port that was free a moment ago: nothing is listening on it.
+    const probe = http.createServer();
+    await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+    const closedPort = (probe.address() as AddressInfo).port;
+    await new Promise((resolve) => probe.close(resolve));
+    await addEndpoint(["incident.triggered"], `http://127.0.0.1:${closedPort}/unreachable`);
+    const [deliveryId] = await fanOut(id);
+    await expect(deliverWebhook(ctx, deliveryId, false)).rejects.toThrow("fetch failed (ECONNREFUSED)");
+  });
+
   it("disables an endpoint that answers 410 Gone, without retrying", async () => {
     const id = await openIncident();
     const endpointId = await addEndpoint();
