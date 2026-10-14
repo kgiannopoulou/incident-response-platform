@@ -16,6 +16,7 @@ export type IncidentSummary = {
   severity: IncidentSeverity;
   status: IncidentStatus;
   alert_count: number;
+  last_alert_at: string | null;
   escalation_level: number;
   triggered_at: string;
   acknowledged_at: string | null;

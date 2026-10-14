@@ -4,6 +4,7 @@
 //   npm run simulate                 # checkout outage scenario
 //   npm run simulate -- recover      # resolve its alerts again
 //   npm run simulate -- noise        # INFO/WARNING noise, staging alert, latency rule
+//   npm run simulate -- storm        # 4 repeats of one alert -> 1 incident; HIGH then CRITICAL raises severity
 //   npm run simulate -- burst        # 150 alerts in a row: watch the rate limit kick in
 //
 // Options via env: IRP_API_URL (default http://localhost:4000),
@@ -63,6 +64,33 @@ async function main() {
     log("WARNING (recorded)", await client.trigger({ severity: "WARNING", title: "CPU > 80%", source: "node-exporter" }));
     log("staging (suppressed by rule)", await client.trigger({ severity: "CRITICAL", title: "Smoke test failed", source: "staging-probe" }));
     log("latency WARNING (rule -> SEV3)", await client.trigger({ severity: "WARNING", title: "Checkout p99 latency 1800ms", source: "prometheus" }));
+  } else if (scenario === "storm") {
+    // Correlation: the same problem reported again and again is one incident.
+    for (const errorRate of [12, 19, 27, 38]) {
+      const result = await client.trigger({
+        service: "checkout-api",
+        severity: "CRITICAL",
+        title: "Checkout API elevated error rate",
+        description: `Error rate reached ${errorRate}%`,
+        source: "prometheus",
+        deduplicationKey: "checkout-api-errors",
+        metadata: { errorRate },
+      });
+      log(`CRITICAL errorRate=${errorRate}%`, { decision: result.decision, incident: result.incident });
+      await sleep(500);
+    }
+    // Severity follows the worst alert: HIGH opens a SEV2, CRITICAL raises it.
+    for (const severity of ["HIGH", "CRITICAL"] as const) {
+      const result = await client.trigger({
+        service: "checkout-api",
+        severity,
+        title: "Checkout database connections exhausted",
+        source: "prometheus",
+        deduplicationKey: "checkout-db-pool",
+      });
+      log(`${severity} db pool`, { decision: result.decision, incident: result.incident });
+      await sleep(500);
+    }
   } else if (scenario === "burst") {
     // No retries, so the 429s are visible instead of being waited out.
     const raw = new AlertClient({ baseUrl, apiKey, maxRetries: 0 });

@@ -47,12 +47,14 @@ Authentication:
   "deduplicationKey": "checkout-errors",
   "decision": "incident_created",
   "reason": "Default rule: critical/high alerts open an incident",
-  "incident": { "id": 2, "number": 2, "status": "triggered" }
+  "incident": { "id": 2, "number": 2, "status": "triggered", "severity": "sev1", "alertCount": 1 }
 }
 ```
 
 - `id` — `alert_` + a [ULID](https://github.com/ulid/spec): unique, not guessable, sorts by time.
 - `status` — `triggered`, or `suppressed` (matched a suppress rule, or service in maintenance).
+- `incident.alertCount` — how many alerts the incident has grouped so far; a fourth repeat of the
+  same problem answers `"decision": "grouped"` with `"alertCount": 4`.
 - `decision` — `incident_created`, `grouped` (joined the open incident with the same key),
   `recorded` (no incident: by default `INFO`/`WARNING`), `suppressed`, `maintenance`, or `resolved`.
 

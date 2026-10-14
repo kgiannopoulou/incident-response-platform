@@ -83,6 +83,45 @@ Two limits, both in Redis so every API instance shares them (`apps/api/src/lib/r
 Both fail open: if Redis is down the request is allowed and the error logged. For an alerting
 system, dropping alerts during an outage is worse than briefly not rate limiting.
 
+### Correlation: alerts → incidents
+
+Not every alert should become an incident. A failing check reports every minute:
+
+```
+10:31 checkout-api ERROR ┐
+10:32 checkout-api ERROR │      INC-142  Checkout API elevated error rate
+10:32 checkout-api ERROR ├────► Alerts: 4 · Severity: SEV1 · Status: triggered
+10:33 checkout-api ERROR ┘      (paged once)
+```
+
+`apps/api/src/domain/correlation.ts` holds the logic, and it is deliberately the pseudo-code you'd
+write on a whiteboard:
+
+```ts
+const existing = await findOpenIncident(db, service.id, dedupKey); // SELECT … FOR UPDATE
+if (existing) await groupAlert(db, fx, existing, alert);
+else await createIncident(db, fx, { …, dedupKey });
+```
+
+- **The correlation key is `(service, deduplicationKey)`.** Two services can both send
+  `"db-errors"` without being merged. Without a client key, the derived hash above is used, so
+  `p99 latency 2300ms` and `p99 latency 2410ms` still correlate.
+- **Grouped alerts are first-class.** Each one is linked through `incident_alerts`, bumps
+  `alert_count` and `last_alert_at`, and adds an `alert_attached` timeline entry; the incident page
+  lists every alert with its metadata. Paging happens once, when the incident opens.
+- **Severity follows the worst alert, upwards only.** `highest_alert_severity` remembers the most
+  severe alert grouped so far. A strictly more severe alert (HIGH latency, then CRITICAL errors under
+  the same key) raises the incident (SEV2 → SEV1, with a system `severity_changed` event and audit
+  entry); repeats at an already-seen severity don't, so a responder who consciously downgrades an
+  incident isn't overruled by the next copy of the same alert.
+- **A resolved incident is closed for correlation.** The partial unique index below only covers open
+  incidents, so the next alert for that key starts a new incident (a recurrence is a new event with
+  its own timeline and postmortem).
+- **Replays are idempotent.** Attaching the same alert twice is `ON CONFLICT DO NOTHING` and does not
+  inflate the count.
+
+`npm run simulate -- storm` plays this out against a running API.
+
 ### The duplicate-alert race
 
 Monitoring systems fire bursts. Two identical alerts arriving together would both see "no open

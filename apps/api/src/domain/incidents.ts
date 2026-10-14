@@ -1,5 +1,6 @@
 import type { PoolClient } from "@irp/database";
 import {
+  type AlertSeverity,
   assertTransition,
   buildPostmortemDraft,
   deriveServiceStatus,
@@ -32,6 +33,8 @@ export type IncidentRow = {
   escalation_level: number;
   next_escalation_at: Date | null;
   alert_count: number;
+  last_alert_at: Date | null;
+  highest_alert_severity: AlertSeverity | null;
   triggered_at: Date;
   acknowledged_at: Date | null;
   resolved_at: Date | null;
@@ -171,26 +174,6 @@ export async function createIncident(db: PoolClient, fx: Effects, input: NewInci
   return incident;
 }
 
-export async function attachAlert(
-  db: PoolClient,
-  fx: Effects,
-  incident: IncidentRow,
-  alert: { id: number; title: string; source: string },
-  isFirst: boolean
-) {
-  await db.query(`INSERT INTO incident_alerts (incident_id, alert_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, [
-    incident.id,
-    alert.id,
-  ]);
-  await db.query(`UPDATE incidents SET alert_count = alert_count + 1 WHERE id = $1`, [incident.id]);
-  if (!isFirst) {
-    await addTimeline(db, fx, incident, "alert_attached", `Alert grouped: "${alert.title}" from ${alert.source}`, null, {
-      alertId: alert.id,
-    });
-  }
-  changed(fx, incident);
-}
-
 const STATUS_MESSAGES: Record<IncidentStatus, string> = {
   triggered: "Triggered",
   acknowledged: "Acknowledged",
@@ -279,7 +262,8 @@ export async function changeSeverity(
   fx: Effects,
   incident: IncidentRow,
   severity: IncidentSeverity,
-  actor: Actor
+  actor: Actor,
+  reason?: string
 ) {
   if (incident.severity === severity) return incident;
   const { rows } = await db.query<IncidentRow>(`UPDATE incidents SET severity = $2 WHERE id = $1 RETURNING *`, [
@@ -291,9 +275,9 @@ export async function changeSeverity(
     fx,
     incident,
     "severity_changed",
-    `Severity changed from ${incident.severity.toUpperCase()} to ${severity.toUpperCase()}`,
+    `Severity changed from ${incident.severity.toUpperCase()} to ${severity.toUpperCase()}${reason ? ` (${reason})` : ""}`,
     actor,
-    { from: incident.severity, to: severity }
+    { from: incident.severity, to: severity, ...(reason ? { reason } : {}) }
   );
   await recomputeServiceStatus(db, fx, incident.service_id);
   await audit(db, {
@@ -302,7 +286,7 @@ export async function changeSeverity(
     action: "incident.severity",
     entityType: "incident",
     entityId: incident.id,
-    details: { from: incident.severity, to: severity },
+    details: { from: incident.severity, to: severity, reason: reason ?? null },
   });
   changed(fx, rows[0]);
   return rows[0];

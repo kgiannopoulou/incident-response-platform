@@ -37,7 +37,7 @@ export function incidentsRouter(deps: Deps) {
     const severity = INCIDENT_SEVERITIES.includes(req.query.severity as never) ? (req.query.severity as string) : null;
     const serviceId = req.query.serviceId ? Number(req.query.serviceId) : null;
     const { rows } = await deps.pool.query(
-      `SELECT i.id, i.number, i.title, i.severity, i.status, i.alert_count, i.escalation_level,
+      `SELECT i.id, i.number, i.title, i.severity, i.status, i.alert_count, i.last_alert_at, i.escalation_level,
               i.triggered_at, i.acknowledged_at, i.resolved_at,
               s.id AS service_id, s.name AS service_name, u.name AS commander_name
        FROM incidents i

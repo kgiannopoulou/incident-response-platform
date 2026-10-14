@@ -14,7 +14,8 @@ import {
 import type { Deps } from "../deps";
 import { audit } from "../lib/audit";
 import { Effects } from "../lib/effects";
-import { addTimeline, attachAlert, changeStatus, createIncident, type IncidentRow } from "./incidents";
+import { attachAlert, findOpenIncident, groupAlert } from "./correlation";
+import { addTimeline, changeStatus, createIncident, type IncidentRow } from "./incidents";
 
 // The alert ingestion pipeline behind POST /api/v1/alerts:
 //
@@ -44,20 +45,13 @@ export type IngestResult = {
   deduplicationKey: string;
   decision: "incident_created" | "grouped" | "recorded" | "suppressed" | "resolved" | "maintenance";
   reason: string;
-  incident: { id: number; number: number; status: string } | null;
+  incident: { id: number; number: number; status: string; severity: string; alertCount: number } | null;
   resolvedCount?: number;
 };
 
-const summarize = (i: IncidentRow | null) => (i ? { id: i.id, number: i.number, status: i.status } : null);
+const summarize = (i: IncidentRow | null) =>
+  i ? { id: i.id, number: i.number, status: i.status, severity: i.severity, alertCount: i.alert_count } : null;
 const isoSeconds = (d: Date) => d.toISOString().replace(/\.\d{3}Z$/, "Z");
-
-async function findOpenIncident(db: PoolClient, serviceId: number, dedupKey: string) {
-  const { rows } = await db.query<IncidentRow>(
-    `SELECT * FROM incidents WHERE service_id = $1 AND dedup_key = $2 AND status <> 'resolved' FOR UPDATE`,
-    [serviceId, dedupKey]
-  );
-  return rows[0] ?? null;
-}
 
 export async function ingestAlert(
   deps: { pool: Pool; redis: Redis; queues: Deps["queues"] },
@@ -97,7 +91,7 @@ export async function ingestAlert(
         ]
       );
       fx.publish(service.organization_id, { type: "alert.received", alertId: rows[0].id, serviceId: service.id });
-      return { ...rows[0], title, source: payload.source, status };
+      return { ...rows[0], title, source: payload.source, severity, status };
     };
 
     const respond = (
@@ -122,13 +116,14 @@ export async function ingestAlert(
       return respond(alert, "maintenance", "Service is in maintenance", null);
     }
 
-    // Grouping comes first: a repeat of an alert that already has an open
-    // incident joins it, whatever the rules would say about a fresh alert.
+    // Correlation comes first: a repeat of an alert that already has an
+    // open incident joins it, whatever the rules would say about a fresh
+    // alert (see correlation.ts).
     const open = await findOpenIncident(db, service.id, dedupKey);
     if (open) {
       const alert = await insertAlert("triggered", null);
-      await attachAlert(db, fx, open, alert, false);
-      return respond(alert, "grouped", "Grouped into open incident", open);
+      const grouped = await groupAlert(db, fx, open, alert);
+      return respond(alert, "grouped", `Grouped into open incident (${grouped.alert_count} alerts)`, grouped);
     }
 
     const { rows: ruleRows } = await db.query<{
@@ -172,16 +167,16 @@ export async function ingestAlert(
       openedBy: `by alert from ${payload.source} (${decision.reason})`,
     });
     if (incident) {
-      await attachAlert(db, fx, incident, alert, true);
-      return respond(alert, "incident_created", decision.reason, incident);
+      const withAlert = await attachAlert(db, fx, incident, alert, true);
+      return respond(alert, "incident_created", decision.reason, withAlert);
     }
 
     // Lost the race: a concurrent request opened the incident for this key
     // between our lookup and insert. Join it instead of failing.
     const winner = await findOpenIncident(db, service.id, dedupKey);
     if (!winner) throw new Error("Dedup conflict without an open incident");
-    await attachAlert(db, fx, winner, alert, false);
-    return respond(alert, "grouped", "Grouped into open incident", winner);
+    const grouped = await groupAlert(db, fx, winner, alert);
+    return respond(alert, "grouped", `Grouped into open incident (${grouped.alert_count} alerts)`, grouped);
   });
 
   await fx.flush(deps);

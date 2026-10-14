@@ -116,6 +116,12 @@ export default function IncidentPage() {
             Commander: <span className="text-zinc-200">{incident.commander_name ?? "unassigned"}</span>
           </div>
           <div title={dateTime(incident.triggered_at)}>Opened {timeAgo(incident.triggered_at)}</div>
+          {incident.alert_count > 0 && (
+            <div>
+              Alerts: <span className="text-zinc-200">{incident.alert_count}</span>
+              {incident.last_alert_at && <> · last {timeAgo(incident.last_alert_at)}</>}
+            </div>
+          )}
           {incident.acknowledged_at && (
             <div>
               Time to acknowledge:{" "}

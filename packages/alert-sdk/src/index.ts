@@ -27,7 +27,7 @@ export type AlertResult = {
   deduplicationKey: string;
   decision: "incident_created" | "grouped" | "recorded" | "suppressed" | "resolved" | "maintenance";
   reason: string;
-  incident: { id: number; number: number; status: string } | null;
+  incident: { id: number; number: number; status: string; severity: string; alertCount: number } | null;
   resolvedCount?: number;
 };
 

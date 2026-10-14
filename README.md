@@ -56,8 +56,10 @@ Monitoring tool / app ──POST /api/v1/alerts──► API key (hashed lookup)
   several keys per service; **rotation** with a grace period in which old and new key both work;
   instant **revocation**; **last-used** timestamps; per-key **rate limits** (Redis token bucket, with
   `RateLimit-*` / `Retry-After` headers) and lock-out of IPs that keep sending bad keys.
-- **Deduplication & grouping** — repeats of the same problem join the open incident instead
-  of paging again. Safe under concurrency: 10 simultaneous identical alerts open exactly one incident.
+- **Deduplication & correlation** — repeats of the same problem (same service + `deduplicationKey`)
+  join the open incident instead of paging again: four `checkout-errors` alerts are one incident with
+  `Alerts: 4`. A more severe repeat raises the incident's severity (never lowers it).
+  Safe under concurrency: 10 simultaneous identical alerts open exactly one incident.
 - **Matching rules** per service (first match wins): open an incident with a severity override,
   record only, or suppress (e.g. staging noise). Sensible default when no rule matches.
 - **Incident lifecycle** enforced by a state machine (`triggered → acknowledged → investigating →
@@ -162,6 +164,7 @@ Or run everything in containers: `docker compose --profile app up --build`
 
 ```sh
 npm run simulate                # "checkout is down": 5xx alerts (grouped) + payment timeouts
+npm run simulate -- storm       # 4 repeats of one alert -> 1 incident (Alerts: 4); HIGH then CRITICAL raises SEV2 -> SEV1
 npm run simulate -- noise       # INFO/WARNING (recorded), staging alert (suppressed), latency (rule → SEV3)
 npm run simulate -- recover     # monitoring clears the alerts → Checkout auto-resolves
 ```
