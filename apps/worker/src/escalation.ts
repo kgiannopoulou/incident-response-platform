@@ -43,7 +43,7 @@ export async function escalateIncident(ctx: WorkerContext, incidentId: number) {
     if (!current) {
       await db.query(`UPDATE incidents SET next_escalation_at = NULL WHERE id = $1`, [incidentId]);
       await db.query(
-        `INSERT INTO timeline_events (incident_id, type, message) VALUES ($1, 'escalated', $2)`,
+        `INSERT INTO timeline_events (incident_id, event_type, message) VALUES ($1, 'INCIDENT_ESCALATED', $2)`,
         [incidentId, "Escalation policy exhausted — still unacknowledged"]
       );
       return { incident, notificationIds: [], nextAt: null, paged: true };
@@ -73,9 +73,9 @@ export async function escalateIncident(ctx: WorkerContext, incidentId: number) {
     }
 
     const names = targets.map((t) => t.name).join(", ") || "nobody (empty level)";
-    await db.query(`INSERT INTO timeline_events (incident_id, type, message, metadata) VALUES ($1, $2, $3, $4)`, [
+    await db.query(`INSERT INTO timeline_events (incident_id, event_type, message, metadata) VALUES ($1, $2, $3, $4)`, [
       incidentId,
-      isFirst ? "notified" : "escalated",
+      isFirst ? "NOTIFICATION_SENT" : "INCIDENT_ESCALATED",
       isFirst
         ? `Paged ${names} (escalation level ${current.level})`
         : `Not acknowledged — escalated to level ${current.level}: paged ${names}`,

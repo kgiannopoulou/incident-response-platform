@@ -211,6 +211,44 @@ split into `components/incident/*`:
   underneath; **responders**, **paging** (who was paged at which level, delivery state), **alerts**
   (every grouped alert with its metadata) and the **postmortem** link alongside.
 
+## Immutable timeline
+
+Every important action becomes a row in `timeline_events (id, incident_id, actor_id, event_type,
+message, metadata JSONB, created_at, prev_hash, hash)`:
+
+| `event_type` | Written when | `metadata` |
+| --- | --- | --- |
+| `INCIDENT_CREATED` | an alert or a person opens the incident | `{ severity }` |
+| `ALERT_ATTACHED` / `ALERT_RESOLVED` | a repeat alert is grouped / the monitor clears alerts | `{ alertId, severity, alertCount }` / `{ alertIds }` |
+| `NOTIFICATION_SENT` / `INCIDENT_ESCALATED` | level 1 is paged / a later level is paged (worker or *Escalate*) | `{ level, userIds, manual? }` |
+| `INCIDENT_ACKNOWLEDGED`, `STATUS_CHANGED`, `INCIDENT_RESOLVED` | any status change | `{ from, to }` |
+| `SEVERITY_CHANGED` | by a person, or raised by a worse grouped alert | `{ from, to, reason? }` |
+| `RESPONDER_ADDED`, `COMMANDER_ASSIGNED` | people join or change role | `{ userId, … }` |
+| `NOTE_ADDED`, `POSTMORTEM_GENERATED` | notes; postmortem drafted or refreshed | |
+
+It is an **audit log, so it is append-only**, enforced at three levels:
+
+1. **No API to change history.** `addTimeline()` is the only writer; there is no update or delete
+   function and no `PUT`/`PATCH`/`DELETE` route (tests assert the 404s). Corrections are new events.
+2. **The database refuses.** `BEFORE UPDATE` / `BEFORE DELETE` triggers raise
+   `timeline_events is append-only`, whoever is connected — the API, the worker or someone with
+   `psql`. Deleting an entire incident still works: the delete guard only fires while the parent
+   incident exists, so `ON DELETE CASCADE` goes through.
+3. **Tampering is evident.** Each event stores `hash = sha256(prev_hash ‖ incident ‖ type ‖ actor ‖
+   message ‖ metadata ‖ created_at)`, chained per incident in insertion order (a `BEFORE INSERT`
+   trigger computes it, locking the incident row so concurrent appends can't fork the chain).
+   `timeline_verify(incident_id)` walks the chain and returns the first event that no longer matches.
+   The incident page shows *🔒 chain verified* or *⚠ chain broken at event #N*. Tests disable the
+   triggers as a table owner, rewrite a note or delete an event, and assert that verification
+   pinpoints it.
+
+What the chain does *not* do: someone who can rewrite rows can also recompute every later hash.
+Anchoring the latest hash somewhere they can't write (an external log, a signed daily digest) would
+close that gap; it's on the production list below.
+
+Migration `0005` renamed the vocabulary to `SCREAMING_SNAKE_CASE`, the columns to `event_type` /
+`actor_id`, added a `CHECK` on known event types, and backfilled the chain for existing events.
+
 ## Side effects after commit
 
 Publishing "incident created" to browsers or enqueuing a page *before* the transaction commits
@@ -281,6 +319,8 @@ narrative a responder has written.
 
 - **Outbox table** instead of post-commit flush + sweeper, if more event types need guaranteed delivery.
 - **Partitioning / retention** for `alerts`, `timeline_events` and `audit_log`.
+- **Anchor the timeline hash chain** externally (e.g. publish each incident's head hash to a write-once
+  store) so even a database superuser can't rewrite history undetected.
 - **Scoped keys** (trigger-only vs. resolve) and per-organization quotas on top of per-key limits.
 - **On-call schedules** as escalation targets; email/SMS channels.
 - **OpenTelemetry** traces across API → queue → worker.

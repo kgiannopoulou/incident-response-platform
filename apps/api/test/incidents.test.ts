@@ -54,15 +54,16 @@ describe("incident lifecycle", () => {
 
     const detail = await api().get("/api/v1/incidents/1").set(sam);
     expect(detail.body.incident).toMatchObject({ status: "resolved", service_status: "operational" });
-    expect(detail.body.timeline.map((e: { type: string }) => e.type)).toEqual([
-      "incident_created",
-      "acknowledged",
-      "status_changed",
-      "note",
-      "status_changed",
-      "resolved",
-      "postmortem_generated",
+    expect(detail.body.timeline.map((e: { event_type: string }) => e.event_type)).toEqual([
+      "INCIDENT_CREATED",
+      "INCIDENT_ACKNOWLEDGED",
+      "STATUS_CHANGED",
+      "NOTE_ADDED",
+      "STATUS_CHANGED",
+      "INCIDENT_RESOLVED",
+      "POSTMORTEM_GENERATED",
     ]);
+    expect(detail.body.timeline[2].metadata).toEqual({ from: "acknowledged", to: "investigating" });
     expect(detail.body.responders).toEqual([expect.objectContaining({ name: "Sam", role: "commander" })]);
 
     const pm = await api().get("/api/v1/incidents/1/postmortem").set(sam);
@@ -171,7 +172,7 @@ describe("incident lifecycle", () => {
     expect(exhausted.body.error).toMatch(/last level \(L3\)/);
 
     const detail = await api().get("/api/v1/incidents/1").set(sam);
-    const escalations = detail.body.timeline.filter((e: { type: string }) => e.type === "escalated");
+    const escalations = detail.body.timeline.filter((e: { event_type: string }) => e.event_type === "INCIDENT_ESCALATED");
     expect(escalations.map((e: { message: string; actor_name: string }) => [e.message, e.actor_name])).toEqual([
       ["Escalated to level 1: paged Sam", "Sam"],
       ["Escalated to level 2: paged Alex", "Sam"],

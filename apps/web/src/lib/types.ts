@@ -28,12 +28,16 @@ export type IncidentSummary = {
 
 export type TimelineEvent = {
   id: number;
-  type: string;
+  event_type: string;
+  actor_id: number | null;
   message: string;
   metadata: Record<string, unknown>;
   created_at: string;
   actor_name: string | null;
 };
+
+// Result of re-verifying the timeline's hash chain (see migration 0005).
+export type TimelineIntegrity = { valid: boolean; events: number; first_invalid_id: number | null };
 
 export type IncidentDetail = {
   incident: IncidentSummary & {
@@ -55,6 +59,7 @@ export type IncidentDetail = {
     received_at: string;
   }[];
   timeline: TimelineEvent[];
+  timeline_integrity: TimelineIntegrity;
   responders: { id: number; name: string; email: string; role: string }[];
   notifications: {
     id: number;

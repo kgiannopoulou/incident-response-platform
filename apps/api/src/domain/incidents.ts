@@ -48,6 +48,9 @@ const changed = (fx: Effects, incident: IncidentRow) =>
     number: incident.number,
   });
 
+// Appends to the incident's timeline, the only way events are written.
+// There is deliberately no update/delete counterpart: the table is
+// append-only and hash-chained (migration 0005).
 export async function addTimeline(
   db: PoolClient,
   fx: Effects,
@@ -58,7 +61,7 @@ export async function addTimeline(
   metadata: Record<string, unknown> = {}
 ) {
   await db.query(
-    `INSERT INTO timeline_events (incident_id, type, actor_user_id, message, metadata)
+    `INSERT INTO timeline_events (incident_id, event_type, actor_id, message, metadata)
      VALUES ($1, $2, $3, $4, $5)`,
     [incident.id, type, actor?.id ?? null, message, JSON.stringify(metadata)]
   );
@@ -155,7 +158,7 @@ export async function createIncident(db: PoolClient, fx: Effects, input: NewInci
   if (!incident) return null;
 
   if (input.actor) await addResponderRow(db, incident.id, input.actor.id, "commander");
-  await addTimeline(db, fx, incident, "incident_created", `Incident opened ${input.openedBy}`, input.actor, {
+  await addTimeline(db, fx, incident, "INCIDENT_CREATED", `Incident opened ${input.openedBy}`, input.actor, {
     severity: incident.severity,
   });
   await recomputeServiceStatus(db, fx, incident.service_id);
@@ -216,7 +219,8 @@ export async function changeStatus(
     await addResponderRow(db, incident.id, actor.id, updated.commander_id === actor.id ? "commander" : "responder");
   }
 
-  const type: TimelineEventType = to === "acknowledged" ? "acknowledged" : to === "resolved" ? "resolved" : "status_changed";
+  const type: TimelineEventType =
+    to === "acknowledged" ? "INCIDENT_ACKNOWLEDGED" : to === "resolved" ? "INCIDENT_RESOLVED" : "STATUS_CHANGED";
   const base = STATUS_MESSAGES[to];
   await addTimeline(db, fx, updated, type, message ? `${base}: ${message}` : base, actor, { from, to });
 
@@ -263,7 +267,7 @@ export async function changeSeverity(
     db,
     fx,
     incident,
-    "severity_changed",
+    "SEVERITY_CHANGED",
     `Severity changed from ${incident.severity.toUpperCase()} to ${severity.toUpperCase()}${reason ? ` (${reason})` : ""}`,
     actor,
     { from: incident.severity, to: severity, ...(reason ? { reason } : {}) }
@@ -296,11 +300,11 @@ export async function addResponder(
       [incident.id, user.id]
     );
     await db.query(`UPDATE incidents SET commander_id = $2 WHERE id = $1`, [incident.id, user.id]);
-    await addTimeline(db, fx, incident, "commander_assigned", `${user.name} is now incident commander`, actor, {
+    await addTimeline(db, fx, incident, "COMMANDER_ASSIGNED", `${user.name} is now incident commander`, actor, {
       userId: user.id,
     });
   } else {
-    await addTimeline(db, fx, incident, "responder_added", `${user.name} joined as responder`, actor, {
+    await addTimeline(db, fx, incident, "RESPONDER_ADDED", `${user.name} joined as responder`, actor, {
       userId: user.id,
     });
   }
@@ -364,7 +368,7 @@ export async function escalateNow(db: PoolClient, fx: Effects, incident: Inciden
   if (updated.next_escalation_at) fx.escalate(updated.id);
 
   const names = targets.map((t) => t.name).join(", ") || "nobody (empty level)";
-  await addTimeline(db, fx, updated, "escalated", `Escalated to level ${current.level}: paged ${names}`, actor, {
+  await addTimeline(db, fx, updated, "INCIDENT_ESCALATED", `Escalated to level ${current.level}: paged ${names}`, actor, {
     level: current.level,
     userIds: targets.map((t) => t.id),
     manual: true,
@@ -403,8 +407,8 @@ export async function generatePostmortem(
       [incident.id]
     ),
     db.query(
-      `SELECT t.type, t.message, t.created_at, u.name AS actor_name FROM timeline_events t
-       LEFT JOIN users u ON u.id = t.actor_user_id WHERE t.incident_id = $1 ORDER BY t.created_at, t.id`,
+      `SELECT t.event_type, t.message, t.created_at, u.name AS actor_name FROM timeline_events t
+       LEFT JOIN users u ON u.id = t.actor_id WHERE t.incident_id = $1 ORDER BY t.id`,
       [incident.id]
     ),
     db.query(
@@ -425,7 +429,7 @@ export async function generatePostmortem(
       resolvedAt: incident.resolved_at,
     },
     alerts: alerts.map((a) => ({ title: a.title, severity: a.severity, source: a.source, receivedAt: a.received_at })),
-    timeline: timeline.map((t) => ({ type: t.type, message: t.message, actorName: t.actor_name, createdAt: t.created_at })),
+    timeline: timeline.map((t) => ({ type: t.event_type, message: t.message, actorName: t.actor_name, createdAt: t.created_at })),
     responders: responders.map((r) => ({ name: r.name, role: r.role })),
   });
 
@@ -458,7 +462,7 @@ export async function generatePostmortem(
     db,
     fx,
     incident,
-    "postmortem_generated",
+    "POSTMORTEM_GENERATED",
     existing.length ? "Postmortem metrics and timeline refreshed" : "Postmortem draft generated",
     actor
   );

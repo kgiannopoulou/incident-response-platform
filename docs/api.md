@@ -91,7 +91,8 @@ Incidents are addressed by their per-organization **number** (`INC-42` → `42`)
 | --- | --- | --- | --- |
 | GET | `/incidents?status=open\|all\|<status>&severity=&serviceId=` | — | Default `open` |
 | POST | `/incidents` | `{ title, severity, serviceId?, description? }` | Declare manually; caller becomes commander |
-| GET | `/incidents/:number` | — | Incident + `allowed_transitions`, alerts, timeline, responders, notifications, postmortem status |
+| GET | `/incidents/:number` | — | Incident + `allowed_transitions`, alerts, timeline, `timeline_integrity`, responders, notifications, postmortem status |
+| GET | `/incidents/:number/timeline` | — | Append-only timeline (`event_type`, `actor_id`, `metadata`, `prev_hash`, `hash`) + `integrity: { valid, events, first_invalid_id }`. No endpoint edits or deletes events |
 | POST | `/incidents/:number/status` | `{ status, message? }` | `acknowledged`, `investigating`, `mitigated` or `resolved`, state-machine checked. `409 { error, from, to, allowed }` if not allowed |
 | POST | `/incidents/:number/acknowledge` | — | Shorthand for `status: acknowledged` |
 | POST | `/incidents/:number/escalate` | — | Page the next escalation level now (also after acknowledgement). `409` when resolved, no policy, or every level already paged |

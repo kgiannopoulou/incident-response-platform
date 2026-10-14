@@ -203,7 +203,7 @@ async function resolveAlerts(
   let finalIncident = incident;
 
   if (incident && resolved.length > 0) {
-    await addTimeline(db, fx, incident, "alert_resolved", `${resolved.length} alert(s) cleared by the monitoring tool`, null, {
+    await addTimeline(db, fx, incident, "ALERT_RESOLVED", `${resolved.length} alert(s) cleared by the monitoring tool`, null, {
       alertIds: resolved.map((r) => r.id),
     });
     const {

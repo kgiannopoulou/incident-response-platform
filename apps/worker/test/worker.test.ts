@@ -93,8 +93,8 @@ describe("escalateIncident", () => {
     const { rows } = await pool.query(`SELECT next_escalation_at FROM incidents`);
     expect(rows[0].next_escalation_at).toBeNull();
 
-    const { rows: timeline } = await pool.query(`SELECT type, message FROM timeline_events ORDER BY id`);
-    expect(timeline.map((e) => e.type)).toEqual(["notified", "escalated", "escalated"]);
+    const { rows: timeline } = await pool.query(`SELECT event_type, message FROM timeline_events ORDER BY id`);
+    expect(timeline.map((e) => e.event_type)).toEqual(["NOTIFICATION_SENT", "INCIDENT_ESCALATED", "INCIDENT_ESCALATED"]);
     expect(timeline[1].message).toBe("Not acknowledged — escalated to level 2: paged Alex");
   });
 

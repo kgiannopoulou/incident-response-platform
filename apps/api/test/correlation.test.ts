@@ -31,7 +31,7 @@ describe("alert correlation (deduplicationKey)", () => {
     const { rows } = await t.deps.pool.query(
       `SELECT count(*)::int AS incidents, max(alert_count) AS alerts,
               (SELECT count(*)::int FROM incident_alerts) AS links,
-              (SELECT count(*)::int FROM timeline_events WHERE type = 'incident_created') AS opened
+              (SELECT count(*)::int FROM timeline_events WHERE event_type = 'INCIDENT_CREATED') AS opened
        FROM incidents`
     );
     expect(rows[0]).toEqual({ incidents: 1, alerts: 4, links: 4, opened: 1 });
@@ -39,7 +39,7 @@ describe("alert correlation (deduplicationKey)", () => {
     const detail = await request(t.app).get("/api/v1/incidents/1").set(await t.as("sam"));
     expect(detail.body.alerts).toHaveLength(4);
     expect(detail.body.alerts.map((a: { metadata: { errorRate: number } }) => a.metadata.errorRate)).toEqual([12, 19, 27, 38]);
-    expect(detail.body.timeline.filter((e: { type: string }) => e.type === "alert_attached")).toHaveLength(3);
+    expect(detail.body.timeline.filter((e: { event_type: string }) => e.event_type === "ALERT_ATTACHED")).toHaveLength(3);
     expect(detail.body.incident.last_alert_at).toBe(detail.body.alerts[3].received_at);
   });
 
@@ -59,9 +59,9 @@ describe("alert correlation (deduplicationKey)", () => {
     expect(worse.body.incident).toMatchObject({ severity: "sev1", alertCount: 2 });
 
     const { rows } = await t.deps.pool.query(
-      `SELECT message, actor_user_id FROM timeline_events WHERE type = 'severity_changed'`
+      `SELECT message, actor_id FROM timeline_events WHERE event_type = 'SEVERITY_CHANGED'`
     );
-    expect(rows).toEqual([{ message: "Severity changed from SEV2 to SEV1 (CRITICAL alert grouped)", actor_user_id: null }]);
+    expect(rows).toEqual([{ message: "Severity changed from SEV2 to SEV1 (CRITICAL alert grouped)", actor_id: null }]);
   });
 
   it("never lowers severity automatically, and respects a responder's downgrade", async () => {

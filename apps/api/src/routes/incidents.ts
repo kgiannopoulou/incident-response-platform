@@ -77,7 +77,7 @@ export function incidentsRouter(deps: Deps) {
         openedBy: `manually by ${req.user!.name}`,
       });
       if (created && data.description) {
-        await addTimeline(db, fx, created, "note", data.description, actorOf(req));
+        await addTimeline(db, fx, created, "NOTE_ADDED", data.description, actorOf(req));
       }
       return created!;
     });
@@ -100,7 +100,7 @@ export function incidentsRouter(deps: Deps) {
     const incident = rows[0];
     if (!incident) throw notFound("Incident");
 
-    const [alerts, timeline, responders, notifications, postmortem] = await Promise.all([
+    const [alerts, timeline, responders, notifications, postmortem, integrity] = await Promise.all([
       deps.pool.query(
         `SELECT a.public_id AS id, a.title, a.description, a.severity, a.source, a.status, a.metadata, a.received_at, a.resolved_at
          FROM alerts a JOIN incident_alerts ia ON ia.alert_id = a.id
@@ -108,9 +108,9 @@ export function incidentsRouter(deps: Deps) {
         [incident.id]
       ),
       deps.pool.query(
-        `SELECT t.id, t.type, t.message, t.metadata, t.created_at, u.name AS actor_name
-         FROM timeline_events t LEFT JOIN users u ON u.id = t.actor_user_id
-         WHERE t.incident_id = $1 ORDER BY t.created_at, t.id`,
+        `SELECT t.id, t.event_type, t.actor_id, t.message, t.metadata, t.created_at, u.name AS actor_name
+         FROM timeline_events t LEFT JOIN users u ON u.id = t.actor_id
+         WHERE t.incident_id = $1 ORDER BY t.id`,
         [incident.id]
       ),
       deps.pool.query(
@@ -126,6 +126,7 @@ export function incidentsRouter(deps: Deps) {
         [incident.id]
       ),
       deps.pool.query(`SELECT status, updated_at FROM postmortems WHERE incident_id = $1`, [incident.id]),
+      deps.pool.query(`SELECT valid, events, first_invalid_id FROM timeline_verify($1)`, [incident.id]),
     ]);
 
     res.json({
@@ -135,10 +136,32 @@ export function incidentsRouter(deps: Deps) {
       },
       alerts: alerts.rows,
       timeline: timeline.rows,
+      timeline_integrity: integrity.rows[0],
       responders: responders.rows,
       notifications: notifications.rows,
       postmortem: postmortem.rows[0] ?? null,
     });
+  });
+
+  // The append-only timeline on its own, plus the result of re-verifying its
+  // hash chain. There is intentionally no PUT/PATCH/DELETE for events.
+  router.get("/:number/timeline", async (req, res) => {
+    const { rows: found } = await deps.pool.query<{ id: number }>(
+      `SELECT id FROM incidents WHERE organization_id = $1 AND number = $2`,
+      [req.user!.organizationId, numberParam(req)]
+    );
+    if (!found[0]) throw notFound("Incident");
+    const [events, integrity] = await Promise.all([
+      deps.pool.query(
+        `SELECT t.id, t.event_type, t.actor_id, u.name AS actor_name, t.message, t.metadata, t.created_at,
+                t.prev_hash, t.hash
+         FROM timeline_events t LEFT JOIN users u ON u.id = t.actor_id
+         WHERE t.incident_id = $1 ORDER BY t.id`,
+        [found[0].id]
+      ),
+      deps.pool.query(`SELECT valid, events, first_invalid_id FROM timeline_verify($1)`, [found[0].id]),
+    ]);
+    res.json({ events: events.rows, integrity: integrity.rows[0] });
   });
 
   router.post("/:number/status", async (req, res) => {
@@ -181,7 +204,7 @@ export function incidentsRouter(deps: Deps) {
     const { message } = noteSchema.parse(req.body);
     await runTx(deps, async (db, fx) => {
       const locked = await lockIncident(db, req.user!.organizationId, numberParam(req));
-      await addTimeline(db, fx, locked, "note", message, actorOf(req));
+      await addTimeline(db, fx, locked, "NOTE_ADDED", message, actorOf(req));
       await audit(db, {
         organizationId: locked.organization_id,
         actorUserId: req.user!.id,

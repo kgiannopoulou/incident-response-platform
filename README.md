@@ -74,8 +74,10 @@ Monitoring tool / app ──POST /api/v1/alerts──► API key (hashed lookup)
   Slack-compatible webhook, or logged when none is configured.
 - **Live alert feed** (🔴 CRITICAL · 🟠 HIGH · 🟡 WARNING · 🔵 INFO, "12 sec ago") and **live updates** over Server-Sent Events, fanned out through Redis pub/sub so events from the
   API *and* the worker reach every open browser.
-- **Timeline + audit trail** — every incident has an append-only timeline; every change in the
-  organization is written to the audit log in the same transaction as the change.
+- **Immutable timeline + audit trail** — every action is a typed timeline event (`INCIDENT_CREATED`,
+  `STATUS_CHANGED {from,to}`, `NOTE_ADDED`, …). The timeline is append-only — no API to edit it, and
+  Postgres triggers reject `UPDATE`/`DELETE` — and hash-chained, so tampering is detectable. Every
+  change in the organization is also written to the audit log in the same transaction.
 - **Postmortems** — drafted automatically on resolve (summary, impact, first signal, resolution,
   time to acknowledge / mitigate / resolve, alert/escalation counts, suggested action items, generated timeline), then edited and published.
 - **Service health** derived from open incidents (SEV1 → outage, SEV2 → degraded), plus maintenance
@@ -141,6 +143,9 @@ Details and trade-offs in [docs/architecture.md](docs/architecture.md).
 7. **Rate limiting lives in Redis, as one atomic Lua script** (token bucket using Redis' clock), so
    every API instance shares the same limits. It fails open: during a Redis outage, losing alerts
    would be worse than briefly losing rate limiting.
+8. **The timeline is an append-only, hash-chained audit log.** History is never edited: no code path
+   updates events, database triggers refuse `UPDATE`/`DELETE`, and each event's SHA-256 covers its
+   predecessor, so `timeline_verify()` pinpoints any row changed behind the application's back.
 
 ## Quick start
 

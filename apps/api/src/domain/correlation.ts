@@ -43,7 +43,7 @@ export async function findOpenIncident(db: PoolClient, serviceId: number, dedupK
 
 // Links an alert to an incident and updates the incident's counters. The
 // first alert (the one that opened the incident) is already covered by the
-// "incident_created" timeline event; repeats each get an "alert_attached" one.
+// INCIDENT_CREATED timeline event; repeats each get an ALERT_ATTACHED one.
 export async function attachAlert(
   db: PoolClient,
   fx: Effects,
@@ -75,7 +75,7 @@ export async function attachAlert(
       db,
       fx,
       incident,
-      "alert_attached",
+      "ALERT_ATTACHED",
       `Alert grouped: "${alert.title}" from ${alert.source}`,
       null,
       { alertId: alert.id, severity: alert.severity, alertCount: updated.alert_count }

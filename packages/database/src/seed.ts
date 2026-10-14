@@ -181,18 +181,18 @@ async function main() {
       [past.id, users.jordan]
     );
     const events: [string, number | null, string, number][] = [
-      ["incident_created", null, "Incident opened by alert from prometheus:auth-latency", 0],
-      ["notified", null, "Paged Jordan Lee (escalation level 1)", 0],
-      ["acknowledged", users.jordan, "Acknowledged", 6],
-      ["status_changed", users.jordan, "Investigation started", 9],
-      ["note", users.jordan, "Connection pool to the session store saturated after a traffic spike", 21],
-      ["note", users.jordan, "Raised pool size from 20 to 60 and restarted auth pods", 35],
-      ["status_changed", users.jordan, "Mitigated — customer impact stopped: p95 back under 1s", 37],
-      ["resolved", users.jordan, "Resolved: latency back under 400ms after pool resize", 48],
+      ["INCIDENT_CREATED", null, "Incident opened by alert from prometheus:auth-latency", 0],
+      ["NOTIFICATION_SENT", null, "Paged Jordan Lee (escalation level 1)", 0],
+      ["INCIDENT_ACKNOWLEDGED", users.jordan, "Acknowledged", 6],
+      ["STATUS_CHANGED", users.jordan, "Investigation started", 9],
+      ["NOTE_ADDED", users.jordan, "Connection pool to the session store saturated after a traffic spike", 21],
+      ["NOTE_ADDED", users.jordan, "Raised pool size from 20 to 60 and restarted auth pods", 35],
+      ["STATUS_CHANGED", users.jordan, "Mitigated — customer impact stopped: p95 back under 1s", 37],
+      ["INCIDENT_RESOLVED", users.jordan, "Resolved: latency back under 400ms after pool resize", 48],
     ];
     for (const [type, actor, message, minutes] of events) {
       await db.query(
-        `INSERT INTO timeline_events (incident_id, type, actor_user_id, message, created_at)
+        `INSERT INTO timeline_events (incident_id, event_type, actor_id, message, created_at)
          VALUES ($1, $2, $3, $4, $5::timestamptz + make_interval(mins => $6))`,
         [past.id, type, actor, message, past.triggered_at, minutes]
       );

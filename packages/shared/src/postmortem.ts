@@ -67,8 +67,8 @@ export function buildPostmortemDraft(input: PostmortemInput): PostmortemDraft {
     timeToMitigateSeconds: seconds(incident.triggeredAt, incident.mitigatedAt ?? incident.resolvedAt),
     timeToResolveSeconds: seconds(incident.triggeredAt, incident.resolvedAt),
     alertCount: alerts.length,
-    escalations: timeline.filter((e) => e.type === "escalated").length,
-    notesCount: timeline.filter((e) => e.type === "note").length,
+    escalations: timeline.filter((e) => e.type === "INCIDENT_ESCALATED").length,
+    notesCount: timeline.filter((e) => e.type === "NOTE_ADDED").length,
     responderCount: responders.length,
   };
 
@@ -96,7 +96,7 @@ export function buildPostmortemDraft(input: PostmortemInput): PostmortemDraft {
       "Replace this with the confirmed root cause and the contributing factors."
     : "Describe the confirmed root cause and the contributing factors.";
 
-  const resolvedEvent = [...timeline].reverse().find((e) => e.type === "resolved");
+  const resolvedEvent = [...timeline].reverse().find((e) => e.type === "INCIDENT_RESOLVED");
   const resolution = resolvedEvent
     ? `${resolvedEvent.message}${resolvedEvent.actorName ? ` (${resolvedEvent.actorName})` : ""}`
     : "Describe how the incident was mitigated and resolved.";

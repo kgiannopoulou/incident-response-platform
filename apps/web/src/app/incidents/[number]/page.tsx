@@ -48,7 +48,7 @@ export default function IncidentPage() {
 
   if (detail.error) return <ErrorState message={detail.error} onRetry={detail.reload} />;
   if (!detail.data) return <Loading />;
-  const { incident, timeline, alerts, responders, notifications, postmortem } = detail.data;
+  const { incident, timeline, timeline_integrity, alerts, responders, notifications, postmortem } = detail.data;
   const open = incident.status !== "resolved";
 
   return (
@@ -64,7 +64,10 @@ export default function IncidentPage() {
 
       <div className="grid gap-5 lg:grid-cols-3">
         <div className="lg:col-span-2">
-          <IncidentTimeline timeline={timeline} canPost busy={busy} onNote={(message) => act("/notes", { message })} />
+          <IncidentTimeline
+            timeline={timeline}
+            integrity={timeline_integrity}
+            canPost busy={busy} onNote={(message) => act("/notes", { message })} />
         </div>
 
         <div className="space-y-5">

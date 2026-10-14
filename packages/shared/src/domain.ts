@@ -58,19 +58,22 @@ export function incidentRef(number: number) {
   return `INC-${number}`;
 }
 
+// The incident timeline is an append-only audit log (migration 0005): one
+// event per important action, never edited or deleted. Metadata carries the
+// details, e.g. STATUS_CHANGED { from: "triggered", to: "investigating" }.
 export const TIMELINE_EVENT_TYPES = [
-  "incident_created",
-  "alert_attached",
-  "alert_resolved",
-  "notified",
-  "escalated",
-  "acknowledged",
-  "status_changed",
-  "severity_changed",
-  "responder_added",
-  "commander_assigned",
-  "note",
-  "resolved",
-  "postmortem_generated",
+  "INCIDENT_CREATED",
+  "ALERT_ATTACHED",
+  "ALERT_RESOLVED",
+  "NOTIFICATION_SENT", // a responder was paged (escalation level 1)
+  "INCIDENT_ESCALATED", // a later escalation level was paged, automatically or by hand
+  "INCIDENT_ACKNOWLEDGED",
+  "STATUS_CHANGED",
+  "SEVERITY_CHANGED",
+  "RESPONDER_ADDED",
+  "COMMANDER_ASSIGNED",
+  "NOTE_ADDED",
+  "INCIDENT_RESOLVED",
+  "POSTMORTEM_GENERATED",
 ] as const;
 export type TimelineEventType = (typeof TIMELINE_EVENT_TYPES)[number];

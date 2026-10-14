@@ -20,11 +20,11 @@ describe("buildPostmortemDraft", () => {
       { title: "p99 latency high", severity: "high", source: "datadog", receivedAt: t(2) },
     ],
     timeline: [
-      { type: "incident_created", message: "Incident opened by alert", actorName: null, createdAt: t(0) },
-      { type: "escalated", message: "Escalated to level 2", actorName: null, createdAt: t(10) },
-      { type: "acknowledged", message: "Acknowledged", actorName: "Alex", createdAt: t(20) },
-      { type: "note", message: "Rolled back deploy 1.4.2", actorName: "Alex", createdAt: t(40) },
-      { type: "resolved", message: "Resolved: rollback restored error rate", actorName: "Alex", createdAt: t(65) },
+      { type: "INCIDENT_CREATED", message: "Incident opened by alert", actorName: null, createdAt: t(0) },
+      { type: "INCIDENT_ESCALATED", message: "Escalated to level 2", actorName: null, createdAt: t(10) },
+      { type: "INCIDENT_ACKNOWLEDGED", message: "Acknowledged", actorName: "Alex", createdAt: t(20) },
+      { type: "NOTE_ADDED", message: "Rolled back deploy 1.4.2", actorName: "Alex", createdAt: t(40) },
+      { type: "INCIDENT_RESOLVED", message: "Resolved: rollback restored error rate", actorName: "Alex", createdAt: t(65) },
     ],
     responders: [{ name: "Alex", role: "commander" }],
   });
