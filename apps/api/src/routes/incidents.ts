@@ -6,7 +6,6 @@ import {
   INCIDENT_SEVERITIES,
   INCIDENT_TRANSITIONS,
   noteSchema,
-  updatePostmortemSchema,
   updateSeveritySchema,
   updateStatusSchema,
 } from "@irp/shared";
@@ -17,7 +16,6 @@ import {
   changeStatus,
   createIncident,
   escalateNow,
-  generatePostmortem,
   lockIncident,
   type Actor,
 } from "../domain/incidents";
@@ -268,84 +266,6 @@ export function incidentsRouter(deps: Deps) {
       await removeResponder(db, fx, locked, target, roleActorOf(req));
     });
     res.status(204).end();
-  });
-
-  // --- Postmortem --------------------------------------------------------
-
-  router.get("/:number/postmortem", async (req, res) => {
-    const { rows } = await deps.pool.query(
-      `SELECT p.*, i.number, i.title, i.severity, i.status AS incident_status, s.name AS service_name,
-              u.name AS updated_by_name
-       FROM postmortems p
-       JOIN incidents i ON i.id = p.incident_id
-       LEFT JOIN services s ON s.id = i.service_id
-       LEFT JOIN users u ON u.id = p.updated_by
-       WHERE i.organization_id = $1 AND i.number = $2`,
-      [req.user!.organizationId, numberParam(req)]
-    );
-    if (!rows[0]) throw notFound("Postmortem");
-    res.json({ postmortem: rows[0] });
-  });
-
-  // Draft it now (or refresh its metrics/timeline). Only for resolved
-  // incidents: the metrics aren't final before that.
-  router.post("/:number/postmortem", async (req, res) => {
-    await runTx(deps, async (db, fx) => {
-      const locked = await lockIncident(db, req.user!.organizationId, numberParam(req));
-      if (locked.status !== "resolved") {
-        throw new HttpError(409, "Resolve the incident before generating its postmortem");
-      }
-      await generatePostmortem(db, fx, locked, actorOf(req));
-      await audit(db, {
-        organizationId: locked.organization_id,
-        actorUserId: req.user!.id,
-        action: "postmortem.generate",
-        entityType: "incident",
-        entityId: locked.id,
-      });
-    });
-    res.status(201).json({ ok: true });
-  });
-
-  router.put("/:number/postmortem", async (req, res) => {
-    const data = updatePostmortemSchema.parse(req.body);
-    const postmortem = await runTx(deps, async (db, fx) => {
-      const locked = await lockIncident(db, req.user!.organizationId, numberParam(req));
-      const { rows } = await db.query(
-        `UPDATE postmortems SET
-           summary = COALESCE($2, summary),
-           impact = COALESCE($3, impact),
-           root_cause = COALESCE($4, root_cause),
-           resolution = COALESCE($5, resolution),
-           action_items = COALESCE($6, action_items),
-           status = COALESCE($7, status),
-           updated_at = now(),
-           updated_by = $8
-         WHERE incident_id = $1 RETURNING *`,
-        [
-          locked.id,
-          data.summary ?? null,
-          data.impact ?? null,
-          data.rootCause ?? null,
-          data.resolution ?? null,
-          data.actionItems ? JSON.stringify(data.actionItems) : null,
-          data.status ?? null,
-          req.user!.id,
-        ]
-      );
-      if (!rows[0]) throw notFound("Postmortem");
-      await audit(db, {
-        organizationId: locked.organization_id,
-        actorUserId: req.user!.id,
-        action: data.status === "published" ? "postmortem.publish" : "postmortem.update",
-        entityType: "incident",
-        entityId: locked.id,
-        details: { fields: Object.keys(data) },
-      });
-      fx.publish(locked.organization_id, { type: "incident.updated", incidentId: locked.id, number: locked.number });
-      return rows[0];
-    });
-    res.json({ postmortem });
   });
 
   return router;

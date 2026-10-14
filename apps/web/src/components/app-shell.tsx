@@ -11,6 +11,7 @@ const NAV = [
   { href: "/", label: "Dashboard" },
   { href: "/incidents", label: "Incidents" },
   { href: "/alerts", label: "Alerts" },
+  { href: "/postmortems", label: "Postmortems" },
   { href: "/services", label: "Services" },
   { href: "/escalation-policies", label: "Escalation" },
   { href: "/webhooks", label: "Webhooks", adminOnly: true },

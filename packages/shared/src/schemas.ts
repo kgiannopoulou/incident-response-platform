@@ -145,20 +145,35 @@ export const rotateApiKeySchema = z.object({
   graceMinutes: z.number().int().min(0).max(7 * 24 * 60).default(60),
 });
 
+// `id` is assigned by the server when missing, so an item can be ticked off
+// on its own (PATCH .../action-items/:id) even after publishing.
 export const actionItemSchema = z.object({
+  id: z.string().regex(/^ai_[a-z0-9]{4,32}$/).optional(),
   description: z.string().trim().min(1).max(500),
   owner: z.string().trim().max(100).default(""),
+  dueDate: z.iso.date().nullable().default(null),
   done: z.boolean().default(false),
 });
-export type ActionItem = z.infer<typeof actionItemSchema>;
+export type ActionItem = Omit<z.infer<typeof actionItemSchema>, "id"> & { id: string };
 
 export const updatePostmortemSchema = z.object({
   summary: z.string().max(10000).optional(),
   impact: z.string().max(10000).optional(),
   rootCause: z.string().max(10000).optional(),
   resolution: z.string().max(10000).optional(),
+  whatWentWell: z.string().max(10000).optional(),
+  whatWentPoorly: z.string().max(10000).optional(),
   actionItems: z.array(actionItemSchema).max(50).optional(),
+  // Timeline entries (by source event id) to leave out of the document.
+  // Times and wording come from the immutable log and can't be edited.
+  hiddenTimelineEventIds: z.array(z.number().int().positive()).max(500).optional(),
   status: z.enum(["draft", "published"]).optional(),
+});
+
+export const updateActionItemSchema = z.object({
+  done: z.boolean().optional(),
+  owner: z.string().trim().max(100).optional(),
+  dueDate: z.iso.date().nullable().optional(),
 });
 
 export const serviceStatusSchema = z.enum(SERVICE_STATUSES);

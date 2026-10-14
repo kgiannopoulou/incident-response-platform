@@ -1,4 +1,14 @@
-import type { AlertSeverity, AlertStatus, IncidentSeverity, IncidentStatus, ResponderRole, ServiceStatus } from "@irp/shared";
+import type {
+  ActionItem,
+  AlertSeverity,
+  AlertStatus,
+  IncidentSeverity,
+  IncidentStatus,
+  PostmortemMetrics,
+  PostmortemTimelineEntry,
+  ResponderRole,
+  ServiceStatus,
+} from "@irp/shared";
 
 export type User = {
   id: number;
@@ -135,24 +145,35 @@ export type Postmortem = {
   impact: string;
   root_cause: string;
   resolution: string;
-  action_items: { description: string; owner: string; done: boolean }[];
-  metrics: {
-    timeToAcknowledgeSeconds: number | null;
-    timeToMitigateSeconds?: number | null;
-    timeToResolveSeconds: number | null;
-    alertCount: number;
-    escalations: number;
-    notesCount: number;
-    responderCount: number;
-  };
-  timeline_markdown: string;
+  what_went_well: string;
+  what_went_poorly: string;
+  action_items: ActionItem[];
+  metrics: Partial<PostmortemMetrics>;
+  timeline: PostmortemTimelineEntry[];
   generated_at: string;
   updated_at: string;
   updated_by_name: string | null;
+  published_at: string | null;
+  published_by_name: string | null;
   number: number;
   title: string;
   severity: IncidentSeverity;
   service_name: string | null;
+  triggered_at: string;
+  resolved_at: string | null;
+};
+
+export type PostmortemSummary = {
+  number: number;
+  title: string;
+  severity: IncidentSeverity;
+  service_name: string | null;
+  status: "draft" | "published";
+  updated_at: string;
+  published_at: string | null;
+  duration_seconds: number | null;
+  action_items_total: number;
+  action_items_done: number;
 };
 
 export type EscalationPolicy = {

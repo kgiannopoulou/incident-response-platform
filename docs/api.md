@@ -134,6 +134,17 @@ stores a SHA-256 hash and a display prefix (`ir_live_a8f83e7c`).
 
 `last_used_at` has one-minute resolution: it is written at most once a minute per key.
 
+## Postmortems
+
+| Method | Path | Body | Notes |
+| --- | --- | --- | --- |
+| GET | `/postmortems` | — | Every postmortem: incident, severity, `status`, `duration_seconds`, `action_items_done` / `action_items_total` |
+| GET | `/incidents/:number/postmortem` | — | The document: `summary`, `impact`, `root_cause`, `resolution`, `what_went_well`, `what_went_poorly`, `action_items[{ id, description, owner, dueDate, done }]`, `metrics`, `timeline[{ eventId, hash, at, type, message, actor, hidden }]`, `status`, `published_at`, `published_by_name` |
+| POST | `/incidents/:number/postmortem` | — | Draft it, or refresh metrics + timeline from the event log (written text and hidden entries are kept). `409` unless the incident is resolved |
+| PUT | `/incidents/:number/postmortem` | `{ summary?, impact?, rootCause?, resolution?, whatWentWell?, whatWentPoorly?, actionItems?, hiddenTimelineEventIds?, status? }` | `status: "published"` publishes (`422` while the root cause is still the generated placeholder); once published, edits are `409` unless the same request sends `status: "draft"` (reopen) |
+| PATCH | `/incidents/:number/postmortem/action-items/:id` | `{ done?, owner?, dueDate? }` | Allowed after publishing |
+| GET | `/incidents/:number/postmortem/markdown` | — | `text/markdown` download, `INC-142-postmortem.md`; hidden timeline entries are left out |
+
 ## Escalation policies
 
 | Method | Path | Body | Notes |

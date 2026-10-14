@@ -6,8 +6,10 @@ import {
   buildPostmortemDraft,
   deriveServiceStatus,
   incidentRef,
+  mergeTimelineVisibility,
   type IncidentSeverity,
   type IncidentStatus,
+  type PostmortemTimelineEntry,
   type ServiceStatus,
   type TimelineEventType,
 } from "@irp/shared";
@@ -384,8 +386,9 @@ export async function escalateNow(db: PoolClient, fx: Effects, incident: Inciden
 
 // Drafts (or refreshes) the postmortem from the incident's data. With
 // onlyIfMissing it never touches an existing one (used on resolve); a manual
-// regenerate refreshes metrics + timeline but keeps the narrative sections
-// responders have already written.
+// refresh rebuilds metrics + timeline from the event log — keeping the
+// entries responders chose to hide — but never the narrative sections they
+// have written.
 export async function generatePostmortem(
   db: PoolClient,
   fx: Effects,
@@ -393,7 +396,10 @@ export async function generatePostmortem(
   actor: Actor,
   { onlyIfMissing = false } = {}
 ) {
-  const { rows: existing } = await db.query(`SELECT id FROM postmortems WHERE incident_id = $1`, [incident.id]);
+  const { rows: existing } = await db.query<{ timeline: PostmortemTimelineEntry[] }>(
+    `SELECT timeline FROM postmortems WHERE incident_id = $1`,
+    [incident.id]
+  );
   if (existing.length && onlyIfMissing) return;
 
   const [{ rows: svc }, { rows: alerts }, { rows: timeline }, { rows: responders }] = await Promise.all([
@@ -404,7 +410,7 @@ export async function generatePostmortem(
       [incident.id]
     ),
     db.query(
-      `SELECT t.event_type, t.message, t.created_at, u.name AS actor_name FROM timeline_events t
+      `SELECT t.id, t.hash, t.event_type, t.message, t.created_at, u.name AS actor_name FROM timeline_events t
        LEFT JOIN users u ON u.id = t.actor_id WHERE t.incident_id = $1 ORDER BY t.id`,
       [incident.id]
     ),
@@ -424,33 +430,47 @@ export async function generatePostmortem(
       acknowledgedAt: incident.acknowledged_at,
       mitigatedAt: incident.mitigated_at,
       resolvedAt: incident.resolved_at,
+      ackTimedOutAt: incident.ack_timed_out_at,
     },
     alerts: alerts.map((a) => ({ title: a.title, severity: a.severity, source: a.source, receivedAt: a.received_at })),
-    timeline: timeline.map((t) => ({ type: t.event_type, message: t.message, actorName: t.actor_name, createdAt: t.created_at })),
+    timeline: timeline.map((t) => ({
+      id: t.id,
+      hash: t.hash,
+      type: t.event_type,
+      message: t.message,
+      actorName: t.actor_name,
+      createdAt: t.created_at,
+    })),
     responders: responders.map((r) => ({ name: r.name, role: r.role })),
   });
 
   if (existing.length) {
     await db.query(
-      `UPDATE postmortems SET metrics = $2, timeline_markdown = $3, generated_at = now(), updated_at = now(),
-              updated_by = $4
+      `UPDATE postmortems SET metrics = $2, timeline = $3, generated_at = now(), updated_at = now(), updated_by = $4
        WHERE incident_id = $1`,
-      [incident.id, JSON.stringify(draft.metrics), draft.timelineMarkdown, actor?.id ?? null]
+      [
+        incident.id,
+        JSON.stringify(draft.metrics),
+        JSON.stringify(mergeTimelineVisibility(draft.timeline, existing[0].timeline)),
+        actor?.id ?? null,
+      ]
     );
   } else {
     await db.query(
-      `INSERT INTO postmortems (incident_id, summary, impact, root_cause, resolution, action_items, metrics,
-                                timeline_markdown, updated_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      `INSERT INTO postmortems (incident_id, summary, impact, root_cause, resolution, what_went_well, what_went_poorly,
+                                action_items, metrics, timeline, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         incident.id,
         draft.summary,
         draft.impact,
         draft.rootCause,
         draft.resolution,
+        draft.whatWentWell,
+        draft.whatWentPoorly,
         JSON.stringify(draft.actionItems),
         JSON.stringify(draft.metrics),
-        draft.timelineMarkdown,
+        JSON.stringify(draft.timeline),
         actor?.id ?? null,
       ]
     );

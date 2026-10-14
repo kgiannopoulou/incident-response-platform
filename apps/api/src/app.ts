@@ -10,6 +10,7 @@ import { authRouter } from "./routes/auth";
 import { escalationPoliciesRouter } from "./routes/escalation-policies";
 import { incidentsRouter } from "./routes/incidents";
 import { orgRouter } from "./routes/org";
+import { postmortemListRouter, postmortemRouter } from "./routes/postmortems";
 import { servicesRouter } from "./routes/services";
 import { webhooksRouter } from "./routes/webhooks";
 
@@ -41,7 +42,9 @@ export function createApp(deps: Deps) {
   v1.use("/auth", authRouter(deps));
   v1.use("/alerts", alertsRouter(deps)); // ingestion uses integration keys, the feed uses sessions
   v1.use(requireAuth(deps.jwtSecret));
+  v1.use("/incidents/:number/postmortem", postmortemRouter(deps));
   v1.use("/incidents", incidentsRouter(deps));
+  v1.use("/postmortems", postmortemListRouter(deps));
   v1.use("/services", servicesRouter(deps));
   v1.use("/escalation-policies", escalationPoliciesRouter(deps));
   v1.use("/admin", requireAdmin, adminRouter(deps));

@@ -108,8 +108,13 @@ Monitoring tool / app ──POST /api/v1/alerts──► API key (hashed lookup)
   `STATUS_CHANGED {from,to}`, `NOTE_ADDED`, …). The timeline is append-only — no API to edit it, and
   Postgres triggers reject `UPDATE`/`DELETE` — and hash-chained, so tampering is detectable. Every
   change in the organization is also written to the audit log in the same transaction.
-- **Postmortems** — drafted automatically on resolve (summary, impact, first signal, resolution,
-  time to acknowledge / mitigate / resolve, alert/escalation counts, suggested action items, generated timeline), then edited and published.
+- **Postmortems** — drafted automatically on resolve as a full document: incident, duration
+  ("37 minutes"), severity (SEV-1), summary, impact, **timeline built from the immutable event log**
+  (key events only, alert storms collapsed, every entry linked to its event id and hash; entries can be
+  hidden from the document but never edited), root cause, resolution, *what went well / poorly*
+  (pre-filled from facts such as ack timeouts and time to mitigate) and **action items** with owner,
+  due date and checkbox. Publishing freezes the text (reopen as draft to change it) while action items
+  stay tickable; export as Markdown; a Postmortems list shows follow-up progress.
 - **Service health** derived from open incidents (SEV1 → outage, SEV2 → degraded), plus maintenance
   windows that record alerts without paging.
 - **Multi-tenant** (organizations), with `admin` / `responder` roles.
@@ -317,7 +322,10 @@ npm run lint
   **acknowledgement timeout** (armed only for high-urgency incidents of policies with a timeout;
   acknowledging cancels the delayed job; severity raise/lower arms/disarms; fires once even with job +
   sweeper racing; pages the next step early while the regular schedule continues; recovered by the
-  sweeper after Redis loses the job).
+  sweeper after Redis loses the job) and **postmortems** (timeline entries all trace to real
+  hash-chained events, alert runs collapsed, hidden entries survive a refresh, publish blocked while the
+  root cause is a placeholder, published text is read-only but action items can still be ticked off,
+  reopen, Markdown export without hidden entries, tenant isolation).
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs typecheck, lint, all tests
 against Postgres/Redis service containers, the web production build, and the Docker image build.

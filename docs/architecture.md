@@ -514,13 +514,38 @@ Sessions are JWTs in an httpOnly, `SameSite=Lax` cookie (`Secure` when `COOKIE_S
 
 ## Postmortems
 
-`buildPostmortemDraft()` is a pure function over the incident, its alerts, timeline and responders.
-It computes time-to-acknowledge, time-to-resolve, alert / escalation / note / responder counts, writes
-first drafts of each section (summary, impact, the first signal as a root-cause starting point, and
-the resolution message), suggests action items from what happened (escalations before acknowledgement,
-slow acknowledgement, alert noise, no alert at all) and renders the timeline. It runs automatically
-when an incident is resolved; "Refresh data" re-computes metrics and timeline without overwriting the
-narrative a responder has written.
+```
+timeline_events (append-only, hash-chained)          postmortems.timeline
+  #801 INCIDENT_CREATED       h=3f9a…   ──────────►  14:02 🔴 Incident opened by alert from prometheus
+  #802 ALERT_ATTACHED         h=b21c…   ┐
+  #803 ALERT_ATTACHED         h=77d0…   ┴─────────►  14:02 🔔 2 more alerts grouped into the incident
+  #806 INCIDENT_ACKNOWLEDGED  h=0c4e…   ──────────►  14:03 👤 Acknowledged — Sam
+  #807 RESPONDER_ADDED                     (left out: housekeeping)
+  #809 NOTE_ADDED             h=a8f1…   ──────────►  14:07 💬 Database connections appear exhausted — Sam
+  ...                                               { eventId: 809, hash: "a8f1…", hidden: false }
+```
+
+When an incident resolves, `buildPostmortemDraft()` (a pure function over the incident, its alerts,
+timeline and responders) produces the whole document, and the earlier design decisions pay off:
+
+- **The timeline is curated from the immutable log, not retyped.** `curateTimeline()` keeps the events
+  that tell the story (pages, escalations, acknowledgement timeouts, status and severity changes,
+  notes, resolution), collapses runs of grouped alerts into one line, and drops housekeeping. Each
+  entry keeps its source `eventId` and `hash`, so any line of a postmortem can be checked against the
+  hash-chained audit log. Responders can **hide** an entry from the document — never edit its time or
+  wording — and a *Refresh data* rebuild keeps those choices (`mergeTimelineVisibility()`).
+- **Facts pre-fill the retrospective.** Metrics (duration, time to acknowledge / mitigate / resolve,
+  alerts, escalations, ack timeouts, notes, responders), a summary, impact window, the first signal as
+  a root-cause starting point, the resolution message, *what went well* ("acknowledged within 2m",
+  "mitigated before the full fix") and *what went poorly* ("nobody acknowledged within the
+  acknowledgement timeout"), plus suggested action items.
+- **Publishing is a state, not a flag.** Publishing requires a real root cause (the generated
+  placeholder is rejected), stamps `published_at` / `published_by` and adds a `POSTMORTEM_PUBLISHED`
+  event to the incident's timeline. The narrative is then read-only; reopening as a draft is explicit
+  and audited. Action items have stable ids and can be ticked off with a `PATCH` after publishing,
+  because follow-up work happens after the review meeting.
+- **Export.** `renderPostmortemMarkdown()` renders the document (header table, sections, `[ ]`/`[x]`
+  action items) for a wiki or a PR.
 
 ## What I'd do next for production
 
