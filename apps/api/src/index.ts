@@ -14,6 +14,7 @@ const connection = { url: env.redisUrl };
 const queues = {
   notifications: new Queue(QUEUES.notifications, { connection }),
   escalations: new Queue(QUEUES.escalations, { connection }),
+  deadLetter: new Queue(QUEUES.deadLetter, { connection }),
 };
 const hub = new RealtimeHub(subscriber, redis.duplicate());
 const rateLimiter = new RateLimiter(redis, { authFailuresPerMinute: env.authFailuresPerMinute });
@@ -40,7 +41,7 @@ async function shutdown() {
   console.log("Shutting down API...");
   await hub.close();
   server.close();
-  await Promise.all([queues.notifications.close(), queues.escalations.close()]);
+  await Promise.all(Object.values(queues).map((q) => q.close()));
   await redis.quit();
   await pool.end();
   process.exit(0);

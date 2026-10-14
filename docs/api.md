@@ -180,6 +180,19 @@ Event types: `incident.created`, `incident.updated`, `timeline.added`, `service.
 `alert.received`; control messages `connected` and `resync` (re-fetch everything). Reconnect with the
 `Last-Event-ID` header (browsers do this automatically) or `?lastEventId=` to replay missed events.
 
+## Background jobs (admin)
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/admin/queues` | Counts per queue (`notifications`, `escalations`, `dead-letter`) by state, plus `workers`: live worker heartbeats (`id`, `startedAt`, `lastSeenAt`, `processed`, `failed`, `deadLettered`) |
+| GET | `/admin/dead-letter` | Jobs that used up every retry, for your organization: original `queue`, `name`, `jobId`, `data`, `failedReason`, `attemptsMade`, `failedAt` |
+| POST | `/admin/dead-letter/:id/retry` | Re-enqueue on the original queue (a failed page's notification row is reset to `queued` first). `409` if the page is no longer failed |
+| DELETE | `/admin/dead-letter/:id` | Discard |
+
+Retries and discards are written to the audit log.
+
 ## Health
 
-`GET /health` (no auth) → `{ ok, postgres, redis, sseClients }`, 503 if a dependency is down.
+`GET /health` (no auth) → `{ ok, postgres, redis, sseClients, workers }`, 503 if Postgres or Redis is
+down. `workers` is the number of workers with a fresh heartbeat; `0` doesn't fail the check (alerts are
+still accepted, pages wait in Postgres).

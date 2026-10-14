@@ -344,6 +344,45 @@ never lost. Duplicates are harmless because every step is idempotent:
 Delivery failures are retried with exponential backoff (5 attempts); the row is marked `failed` with
 the error after the last one and shown in the incident's paging panel.
 
+## Background jobs: Redis + BullMQ
+
+```
+API ─┬─ save incident (COMMIT)
+     └─ escalations.add("incident-created", { incidentId })      ← the request returns here
+                         │
+                         ▼   Redis
+                      worker ── pages step 1: notification rows ──► notifications.add("deliver")
+                         │                                               │ 5 attempts, 2 s → 16 s
+                         │ escalations.add("escalate", delay)            ▼
+                         ▼ (delayed job = next step)                 email / webhook
+                      worker ...                                         │ last attempt failed
+                                                                         ▼
+                                                                    dead-letter queue
+```
+
+- **The HTTP request never waits for a page.** It commits the incident and enqueues an
+  `incident-created` job (after COMMIT, see above); a worker pages the first step.
+- **One retry policy per queue** (`RETRY_POLICY` in `@irp/shared/jobs.ts`), used by every producer:
+  pages get 5 attempts with exponential backoff (2, 4, 8, 16 s); escalation steps 5 attempts from 1 s.
+  Previously only deliveries retried; an escalation step that hit a transient database error now
+  retries too instead of waiting for the sweeper.
+- **Dead-letter queue.** When a job fails its *last* attempt, the worker copies it — original queue,
+  job name and id, data, error, attempts, and the organization it belongs to — into the
+  `dead-letter` queue, which no worker consumes. Admins see it on the **System** page and can
+  **retry** (re-enqueue on the original queue; a page's notification row is reset to `queued` first,
+  because delivery only sends `queued` rows) or **discard**. Both are audited. Failed jobs are not
+  kept in their original queues (`removeOnFail`), so the dead-letter queue is the one place to look.
+- **Tenant scoping.** Queues are shared infrastructure, so counts on the System page are
+  platform-wide, but dead letters carry their `organizationId` and are only listed and retried
+  for that organization.
+- **Worker heartbeats.** Each worker refreshes `irp:worker:<host>:<pid>` (TTL 30 s) every 10 s with
+  processed / failed / dead-lettered counters. `/health` reports how many are alive; a crashed worker
+  drops off within 30 s. No worker is not an API outage: alerts are still accepted and pages wait in
+  Postgres for the sweeper.
+- **Graceful shutdown.** `SIGTERM` stops the sweeper, lets in-flight jobs finish (`Worker.close()`),
+  removes the heartbeat and closes connections; a hard kill is covered by BullMQ's stalled-job
+  recovery plus idempotent jobs.
+
 ## Realtime updates
 
 Open the same incident in two windows. When window A acknowledges, window B changes from

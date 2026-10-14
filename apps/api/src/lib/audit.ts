@@ -4,7 +4,7 @@ import type { PoolClient } from "@irp/database";
 // the same transaction as the change it describes, so the log can't claim
 // something happened that was rolled back (or miss something that wasn't).
 export async function audit(
-  db: PoolClient,
+  db: Pick<PoolClient, "query">,
   entry: {
     organizationId: number;
     actorUserId: number | null;

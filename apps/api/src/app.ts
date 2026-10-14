@@ -2,8 +2,9 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
 import type { Deps } from "./deps";
-import { requireAuth } from "./lib/auth";
+import { requireAdmin, requireAuth } from "./lib/auth";
 import { errorHandler } from "./lib/http";
+import { adminRouter, liveWorkers } from "./routes/admin";
 import { alertsRouter } from "./routes/alerts";
 import { authRouter } from "./routes/auth";
 import { escalationPoliciesRouter } from "./routes/escalation-policies";
@@ -22,13 +23,16 @@ export function createApp(deps: Deps) {
   app.use(express.json({ limit: "256kb" }));
 
   app.get("/health", async (_req, res) => {
-    const [db, redis] = await Promise.allSettled([deps.pool.query("SELECT 1"), deps.redis.ping()]);
+    const [db, redis, workers] = await Promise.allSettled([deps.pool.query("SELECT 1"), deps.redis.ping(), liveWorkers(deps)]);
     const ok = db.status === "fulfilled" && redis.status === "fulfilled";
     res.status(ok ? 200 : 503).json({
       ok,
       postgres: db.status === "fulfilled" ? "up" : "down",
       redis: redis.status === "fulfilled" ? "up" : "down",
       sseClients: deps.hub.connectionCount,
+      // Background workers with a fresh heartbeat. 0 doesn't fail the check —
+      // the API still accepts alerts; pages wait in Postgres until one is back.
+      workers: workers.status === "fulfilled" ? workers.value.length : null,
     });
   });
 
@@ -39,6 +43,7 @@ export function createApp(deps: Deps) {
   v1.use("/incidents", incidentsRouter(deps));
   v1.use("/services", servicesRouter(deps));
   v1.use("/escalation-policies", escalationPoliciesRouter(deps));
+  v1.use("/admin", requireAdmin, adminRouter(deps));
   v1.use("/", orgRouter(deps));
   app.use("/api/v1", v1);
 

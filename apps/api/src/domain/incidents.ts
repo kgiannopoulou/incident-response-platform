@@ -180,7 +180,9 @@ export async function createIncident(db: PoolClient, fx: Effects, input: NewInci
     status: incident.status,
     severity: incident.severity,
   });
-  if (incident.next_escalation_at) fx.escalate(incident.id);
+  // The HTTP request doesn't wait for anyone to be paged: the worker picks
+  // this job up and pages step 1 (Postgres still records that it is due).
+  if (incident.next_escalation_at) fx.escalate(incident.id, "incident-created");
   return incident;
 }
 

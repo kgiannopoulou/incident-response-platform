@@ -9,6 +9,7 @@ export type WorkerContext = {
   redis: Redis; // publisher
   notificationsQueue: Queue;
   escalationsQueue: Queue;
+  deadLetterQueue: Queue;
   sender: NotificationSender;
 };
 

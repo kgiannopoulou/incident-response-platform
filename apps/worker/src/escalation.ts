@@ -1,5 +1,5 @@
 import { pageNextEscalationStep, withTransaction } from "@irp/database";
-import { deliverJobOptions, shouldEscalate, type IncidentStatus } from "@irp/shared";
+import { deliverJobOptions, escalateJobOptions, shouldEscalate, type IncidentStatus } from "@irp/shared";
 import { publish, type WorkerContext } from "./context";
 
 // Pages the next step of an incident's escalation policy, if it's due.
@@ -71,11 +71,7 @@ export async function escalateIncident(ctx: WorkerContext, incidentId: number) {
     await ctx.notificationsQueue.add("deliver", { notificationId: id }, deliverJobOptions(id));
   }
   if (outcome.nextAt) {
-    await ctx.escalationsQueue.add(
-      "escalate",
-      { incidentId },
-      { delay: Math.max(0, outcome.nextAt.getTime() - Date.now()), removeOnComplete: true, removeOnFail: 100 }
-    );
+    await ctx.escalationsQueue.add("escalate", { incidentId }, escalateJobOptions(Math.max(0, outcome.nextAt.getTime() - Date.now())));
   }
   if (outcome.paged) {
     const { organization_id, number } = outcome.incident;

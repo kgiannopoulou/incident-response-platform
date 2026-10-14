@@ -2,10 +2,12 @@ import { Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { resetFixtures, setupTestDatabase, type Fixtures } from "@irp/database/testing";
-import { QUEUES, type DeliverNotificationJob } from "@irp/shared";
+import { deliverJobOptions, QUEUES, WORKER_HEARTBEAT_PREFIX, type DeliverNotificationJob } from "@irp/shared";
 import type { Pool } from "pg";
 import type { NotificationSender, WorkerContext } from "../src/context";
+import { handleFailures } from "../src/dead-letter";
 import { deliverNotification } from "../src/delivery";
+import { Heartbeat } from "../src/heartbeat";
 import { escalateIncident } from "../src/escalation";
 import { sweep } from "../src/sweeper";
 
@@ -29,12 +31,14 @@ beforeAll(async () => {
     redis: new Redis(url.toString(), { maxRetriesPerRequest: null }),
     notificationsQueue: new Queue(QUEUES.notifications, { connection }),
     escalationsQueue: new Queue(QUEUES.escalations, { connection }),
+    deadLetterQueue: new Queue(QUEUES.deadLetter, { connection }),
     sender,
   };
 });
 afterAll(async () => {
   await ctx.notificationsQueue.close();
   await ctx.escalationsQueue.close();
+  await ctx.deadLetterQueue.close();
   await ctx.redis.quit();
   await pool.end();
 });
@@ -200,3 +204,61 @@ describe("sweep", () => {
   });
 });
 
+
+describe("dead-letter queue", () => {
+  it("moves a page that fails every retry to the dead-letter queue, with its error and organization", async () => {
+    const id = await openIncident();
+    await escalateIncident(ctx, id);
+    await ctx.notificationsQueue.obliterate({ force: true }); // drop the production-backoff job
+    const { rows } = await pool.query(`SELECT id FROM notifications`);
+    // Same attempts as production, millisecond backoff to keep the test fast.
+    await ctx.notificationsQueue.add(
+      "deliver",
+      { notificationId: rows[0].id },
+      { ...deliverJobOptions(rows[0].id), backoff: { type: "fixed", delay: 5 } }
+    );
+    failSends = true;
+
+    const worker = new Worker<DeliverNotificationJob>(
+      QUEUES.notifications,
+      (job) => deliverNotification(ctx, job.data.notificationId, job.attemptsMade + 1 >= (job.opts.attempts ?? 1)),
+      { connection: ctx.notificationsQueue.opts.connection }
+    );
+    const stats = { processed: 0, failed: 0, deadLettered: 0 };
+    handleFailures(ctx, QUEUES.notifications, worker, stats);
+    try {
+      for (let i = 0; i < 200 && stats.deadLettered === 0; i++) await new Promise((r) => setTimeout(r, 25));
+      const dead = await ctx.deadLetterQueue.getJobs(["waiting"]);
+      expect(dead).toHaveLength(1);
+      expect(dead[0].data).toMatchObject({
+        queue: "notifications",
+        name: "deliver",
+        jobId: `notification-${rows[0].id}`,
+        data: { notificationId: rows[0].id },
+        failedReason: "webhook down",
+        attemptsMade: 5,
+        organizationId: fx.orgs.acme,
+      });
+      expect(stats).toEqual({ processed: 0, failed: 5, deadLettered: 1 });
+      // The row records the failure; the original queue keeps no failed job around.
+      expect((await pool.query(`SELECT status, attempts FROM notifications`)).rows[0]).toEqual({ status: "failed", attempts: 5 });
+      expect(await ctx.notificationsQueue.getJobCounts("failed")).toMatchObject({ failed: 0 });
+    } finally {
+      await worker.close();
+    }
+  });
+});
+
+describe("worker heartbeat", () => {
+  it("announces the worker with a short TTL and disappears on shutdown", async () => {
+    const heartbeat = new Heartbeat(ctx.redis);
+    await heartbeat.beat();
+    const key = `${WORKER_HEARTBEAT_PREFIX}${heartbeat.stats.id}`;
+    expect(JSON.parse((await ctx.redis.get(key))!)).toMatchObject({ id: heartbeat.stats.id, processed: 0 });
+    const ttl = await ctx.redis.ttl(key);
+    expect(ttl).toBeGreaterThan(0);
+    expect(ttl).toBeLessThanOrEqual(30);
+    await heartbeat.stop();
+    expect(await ctx.redis.exists(key)).toBe(0);
+  });
+});

@@ -1,5 +1,5 @@
 import { withTransaction, type PoolClient } from "@irp/database";
-import { deliverJobOptions, QUEUES, type RealtimeEvent } from "@irp/shared";
+import { deliverJobOptions, escalateJobOptions, type RealtimeEvent } from "@irp/shared";
 import { publishRealtime } from "@irp/shared/realtime";
 import type { Deps } from "../deps";
 
@@ -16,7 +16,7 @@ import type { Deps } from "../deps";
 export class Effects {
   private events: { organizationId: number; event: RealtimeEvent }[] = [];
   private notificationIds: number[] = [];
-  private escalateIncidentIds: number[] = [];
+  private escalations: { incidentId: number; name: string }[] = [];
 
   publish(organizationId: number, event: RealtimeEvent) {
     this.events.push({ organizationId, event });
@@ -26,8 +26,10 @@ export class Effects {
     this.notificationIds.push(notificationId);
   }
 
-  escalate(incidentId: number) {
-    this.escalateIncidentIds.push(incidentId);
+  // "incident-created" for a brand-new incident (the worker pages step 1),
+  // "escalate" when a later step was rescheduled.
+  escalate(incidentId: number, name: "incident-created" | "escalate" = "escalate") {
+    this.escalations.push({ incidentId, name });
   }
 
   async flush(deps: Pick<Deps, "redis" | "queues">) {
@@ -36,14 +38,10 @@ export class Effects {
         await publishRealtime(deps.redis, organizationId, event);
       }
       for (const id of this.notificationIds) {
-        await deps.queues.notifications.add(
-          "deliver",
-          { notificationId: id },
-          deliverJobOptions(id)
-        );
+        await deps.queues.notifications.add("deliver", { notificationId: id }, deliverJobOptions(id));
       }
-      for (const id of this.escalateIncidentIds) {
-        await deps.queues.escalations.add(QUEUES.escalations, { incidentId: id }, { removeOnComplete: true, removeOnFail: 100 });
+      for (const { incidentId, name } of this.escalations) {
+        await deps.queues.escalations.add(name, { incidentId }, escalateJobOptions());
       }
     } catch (err) {
       console.error("Post-commit side effects failed; the worker sweeper will recover:", err);

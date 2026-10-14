@@ -81,8 +81,13 @@ Monitoring tool / app ──POST /api/v1/alerts──► API key (hashed lookup)
   anchored to when the incident triggered. Full CRUD API with validation (strictly increasing delays,
   same-organization targets) and an editor that draws the chain; acknowledging stops it, *Escalate*
   pages the next step immediately.
-- **Notifications** via a background worker (BullMQ) with retries/backoff; delivered to a
-  Slack-compatible webhook, or logged when none is configured.
+- **Background jobs on Redis + BullMQ** — the API saves the incident and queues an
+  `incident-created` job instead of paging inside the request; the worker pages and schedules the
+  next step as a delayed job. Per-queue retry policies with exponential backoff, a **dead-letter
+  queue** for jobs that exhausted their retries (retry / discard from the **System** page, audited),
+  worker heartbeats in `/health`, graceful shutdown.
+- **Notifications** delivered by the worker to a Slack-compatible webhook, or logged when none is
+  configured.
 - **Live alert feed** (🔴 CRITICAL · 🟠 HIGH · 🟡 WARNING · 🔵 INFO, "12 sec ago") and **real-time
   updates** over Server-Sent Events: acknowledge in one window and every other window showing the
   incident flips to ACKNOWLEDGED instantly ("Alex Morgan updated this incident"). Events from the API
@@ -110,8 +115,8 @@ Monitoring tool / app ──POST /api/v1/alerts──► API key (hashed lookup)
                                                     │   ┌────────┐  pub/sub  ┌──────────────┐
                                                     │   │ Redis  │◄─────────►│ apps/worker  │
                                                     ▼   └────────┘  BullMQ   │ escalations, │
-                                              ┌────────────┐                 │ notifications│
-                                              │ PostgreSQL │◄────────────────│ sweeper      │
+                                              ┌────────────┐  (+ dead-letter │ notifications│
+                                              │ PostgreSQL │◄──── queue)─────│ sweeper      │
                                               └────────────┘                 └──────────────┘
 ```
 
@@ -288,7 +293,10 @@ npm run lint
   nowhere in the database, rotation grace periods and expiry, immediate revocation, throttled
   last-used timestamps, per-key token buckets with headers, and the bad-key IP lock-out.
 - **Phases 11–15**: **escalation policies** (CRUD, admin-only writes, ordering/target validation,
-  tenant isolation, delete refused while in use, steps scheduled from the trigger time).
+  tenant isolation, delete refused while in use, steps scheduled from the trigger time), the
+  **dead-letter queue** (a page failing all 5 attempts lands there with its error and organization;
+  retry resets the row and re-enqueues; tenant-scoped; audited), worker heartbeats and the retry
+  policy.
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs typecheck, lint, all tests
 against Postgres/Redis service containers, the web production build, and the Docker image build.

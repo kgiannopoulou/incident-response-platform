@@ -3,8 +3,10 @@ import { Redis } from "ioredis";
 import { createPool } from "@irp/database";
 import { QUEUES, type DeliverNotificationJob, type EscalateIncidentJob } from "@irp/shared";
 import { createSender, type WorkerContext } from "./context";
+import { handleFailures } from "./dead-letter";
 import { deliverNotification } from "./delivery";
 import { escalateIncident } from "./escalation";
+import { Heartbeat } from "./heartbeat";
 import { sweep } from "./sweeper";
 
 const redisUrl = process.env.REDIS_URL;
@@ -16,8 +18,10 @@ const ctx: WorkerContext = {
   redis: new Redis(redisUrl, { maxRetriesPerRequest: null }),
   notificationsQueue: new Queue(QUEUES.notifications, { connection }),
   escalationsQueue: new Queue(QUEUES.escalations, { connection }),
+  deadLetterQueue: new Queue(QUEUES.deadLetter, { connection }),
   sender: createSender(process.env.NOTIFY_WEBHOOK_URL || undefined),
 };
+const heartbeat = new Heartbeat(ctx.redis);
 
 const notifications = new Worker<DeliverNotificationJob>(
   QUEUES.notifications,
@@ -34,9 +38,8 @@ const escalations = new Worker<EscalateIncidentJob>(
   { connection, concurrency: 5 }
 );
 
-for (const worker of [notifications, escalations]) {
-  worker.on("failed", (job, err) => console.error(`[${worker.name}] job ${job?.id} failed: ${err.message}`));
-}
+handleFailures(ctx, QUEUES.notifications, notifications, heartbeat.stats);
+handleFailures(ctx, QUEUES.escalations, escalations, heartbeat.stats);
 
 // The recovery sweep runs on a plain timer, not as a BullMQ repeatable job:
 // it exists to recover from losing Redis state, so it must not live in
@@ -54,13 +57,18 @@ const sweepTimer = setInterval(async () => {
     sweeping = false;
   }
 }, 10_000);
-console.log("Worker started: notifications + escalations queues, sweeping every 10s.");
+heartbeat.start();
+console.log(`Worker ${heartbeat.stats.id} started: notifications + escalations queues, sweeping every 10s.`);
 
+// Graceful shutdown: let in-flight jobs finish (Worker.close waits for
+// them), then release connections. A job interrupted by a hard kill is
+// re-delivered by BullMQ's stalled-job check.
 async function shutdown() {
   console.log("Shutting down worker...");
   clearInterval(sweepTimer);
   await Promise.all([notifications.close(), escalations.close()]);
-  await Promise.all([ctx.notificationsQueue.close(), ctx.escalationsQueue.close()]);
+  await heartbeat.stop();
+  await Promise.all([ctx.notificationsQueue.close(), ctx.escalationsQueue.close(), ctx.deadLetterQueue.close()]);
   await ctx.redis.quit();
   await ctx.pool.end();
   process.exit(0);

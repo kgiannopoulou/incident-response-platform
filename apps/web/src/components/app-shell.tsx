@@ -14,6 +14,7 @@ const NAV = [
   { href: "/services", label: "Services" },
   { href: "/escalation-policies", label: "Escalation" },
   { href: "/audit", label: "Audit log", adminOnly: true },
+  { href: "/system", label: "System", adminOnly: true },
 ];
 
 function LiveIndicator() {

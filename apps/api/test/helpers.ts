@@ -23,6 +23,7 @@ export async function createTestContext() {
   const queues = {
     notifications: new Queue(QUEUES.notifications, { connection }),
     escalations: new Queue(QUEUES.escalations, { connection }),
+    deadLetter: new Queue(QUEUES.deadLetter, { connection }),
   };
   const hub = new RealtimeHub(
     new Redis(redisUrl, { maxRetriesPerRequest: null }),
@@ -62,7 +63,7 @@ export async function createTestContext() {
     },
     async close() {
       await hub.close();
-      await Promise.all([queues.notifications.close(), queues.escalations.close()]);
+      await Promise.all(Object.values(queues).map((q) => q.close()));
       await redis.quit();
       await pool.end();
     },
