@@ -7,7 +7,7 @@ import { Card, cx, ErrorState, inputClass, Loading } from "@/components/ui";
 import { useApi } from "@/lib/use-api";
 import type { IncidentSummary } from "@/lib/types";
 
-const FILTERS = ["open", "triggered", "acknowledged", "investigating", "resolved", "all"] as const;
+const FILTERS = ["open", "triggered", "acknowledged", "investigating", "mitigated", "resolved", "all"] as const;
 
 export default function IncidentsPage() {
   const [status, setStatus] = useState<(typeof FILTERS)[number]>("open");

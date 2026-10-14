@@ -139,26 +139,53 @@ come from `UPDATE organizations SET incident_counter = incident_counter + 1 RETU
 row-locks the organization and also serializes concurrent creations within a tenant. The integration
 test fires 10 identical alerts in parallel and asserts one incident with `alert_count = 10`.
 
-The partial index also governs **reopening**: a resolved incident can't be reopened while a newer
-open incident tracks the same alert (409 instead of a duplicate).
-
 ## Incident lifecycle
 
-The state machine is data, shared by API and UI (`packages/shared/src/lifecycle.ts`):
+Statuses aren't free-form strings. The state machine is data, shared by API and UI
+(`packages/shared/src/lifecycle.ts`):
 
 ```
-triggered → acknowledged | investigating | resolved
-acknowledged → investigating | resolved
-investigating → resolved
-resolved → investigating   (reopen)
+TRIGGERED ──► ACKNOWLEDGED ──► INVESTIGATING ──► MITIGATED ──► RESOLVED
+    │              │                 │                            ▲
+    └──────────────┴─────────────────┴────────────────────────────┘   shortcuts to RESOLVED
 ```
+
+```ts
+export const INCIDENT_TRANSITIONS = {
+  triggered: ["acknowledged", "resolved"],
+  acknowledged: ["investigating", "resolved"],
+  investigating: ["mitigated", "resolved"],
+  mitigated: ["resolved"],
+  resolved: [],
+};
+```
+
+- **Forward only.** Nothing returns to `triggered` or `acknowledged`; `resolved → acknowledged` is
+  rejected with `409 Cannot move an incident from 'resolved' to 'acknowledged' ('resolved' is final)`.
+  Error bodies carry `from`, `to` and `allowed`, so clients can explain the rejection.
+- **`mitigated` means the bleeding stopped** (failover, rollback, feature flag) while the cause is
+  still being fixed. A mitigated SEV1 moves its service from *outage* to *degraded*, and
+  `mitigated_at` gives the postmortem a real impact window and a time-to-mitigate metric, separate
+  from time-to-resolve.
+- **`resolved` is final — no reopening.** If the problem comes back, the next alert opens a *new*
+  incident (correlation only joins open incidents). Reopening would rewrite an incident whose metrics
+  and postmortem were already computed; a recurrence is better modelled as its own incident.
+  (The first version of this project allowed `resolved → investigating`; it was removed with this
+  state machine.)
+- **Skipping ahead keeps the metrics whole.** Resolving straight from `triggered` stamps
+  `mitigated_at = resolved_at`, so "impact lasted until at least here" is always defined.
+- **Enforced twice.** The API validates every move; a `BEFORE UPDATE OF status` trigger
+  (migration `0004`) enforces the same table in Postgres, so a hand-written `UPDATE`, a script or a
+  future code path that bypasses `changeStatus()` still can't produce an impossible transition. A test
+  compares the two tables for all 25 `(from, to)` pairs, so they can't drift apart.
 
 Every status change — from a responder, from `action: "resolve"` with auto-resolve, from the API —
 goes through `changeStatus()` (`apps/api/src/domain/incidents.ts`), which:
 
 - runs on an incident locked with `SELECT … FOR UPDATE`, so concurrent requests are serialized and
   the second "Acknowledge" gets a clean 409 instead of a double transition;
-- stamps `acknowledged_at` / `resolved_at` and clears `next_escalation_at` (stopping escalation);
+- stamps `acknowledged_at` / `mitigated_at` / `resolved_at` and clears `next_escalation_at`
+  (stopping escalation);
 - adds the actor as responder (commander if there is none);
 - writes the timeline event and the audit entry;
 - on resolve, queues "resolved" notifications to everyone who was paged and drafts the postmortem;

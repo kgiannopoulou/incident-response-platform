@@ -30,13 +30,13 @@ const TIMELINE_ICON: Record<string, string> = {
   commander_assigned: "🎖️",
   note: "📝",
   resolved: "🟢",
-  reopened: "♻️",
   postmortem_generated: "📄",
 };
 
 const TRANSITION_LABEL: Record<IncidentStatus, { label: string; variant: "danger" | "primary" | "success" | "ghost" }> = {
   acknowledged: { label: "Acknowledge", variant: "primary" },
   investigating: { label: "Start investigating", variant: "ghost" },
+  mitigated: { label: "Mark mitigated", variant: "ghost" },
   resolved: { label: "Resolve", variant: "success" },
   triggered: { label: "Trigger", variant: "danger" },
 };
@@ -69,7 +69,7 @@ export default function IncidentPage() {
   if (detail.error) return <ErrorState message={detail.error} onRetry={detail.reload} />;
   if (!detail.data) return <Loading />;
   const { incident, timeline, alerts, responders, notifications, postmortem } = detail.data;
-  const reopening = incident.status === "resolved";
+  const closed = incident.status === "resolved";
 
   async function handleTransition(to: IncidentStatus) {
     if (to === "resolved") return setResolving(true);
@@ -142,7 +142,7 @@ export default function IncidentPage() {
 
         <div className="flex flex-wrap items-center gap-2">
           {incident.allowed_transitions.map((to) => {
-            const t = reopening && to === "investigating" ? { label: "Reopen", variant: "ghost" as const } : TRANSITION_LABEL[to];
+            const t = TRANSITION_LABEL[to];
             return (
               <Button key={to} variant={t.variant} disabled={busy} onClick={() => handleTransition(to)}>
                 {t.label}
@@ -152,7 +152,7 @@ export default function IncidentPage() {
           <select
             className={cx(inputClass, "max-w-48")}
             value={incident.severity}
-            disabled={busy || reopening}
+            disabled={busy || closed}
             onChange={(e) => act("/severity", { severity: e.target.value as IncidentSeverity })}
             aria-label="Severity"
           >

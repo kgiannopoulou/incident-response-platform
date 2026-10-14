@@ -156,9 +156,10 @@ async function main() {
     } = await db.query(
       `INSERT INTO incidents (organization_id, number, service_id, title, severity, status, dedup_key,
                               commander_id, escalation_level, alert_count,
-                              triggered_at, acknowledged_at, resolved_at)
+                              triggered_at, acknowledged_at, mitigated_at, resolved_at)
        VALUES ($1, 1, $2, 'Login latency above 3s', 'sev2', 'resolved', 'seed-auth-latency', $3, 1, 1,
                now() - interval '3 days', now() - interval '3 days' + interval '6 minutes',
+               now() - interval '3 days' + interval '37 minutes',
                now() - interval '3 days' + interval '48 minutes')
        RETURNING id, triggered_at`,
       [org.id, auth, users.jordan]
@@ -183,9 +184,10 @@ async function main() {
       ["incident_created", null, "Incident opened by alert from prometheus:auth-latency", 0],
       ["notified", null, "Paged Jordan Lee (escalation level 1)", 0],
       ["acknowledged", users.jordan, "Acknowledged", 6],
-      ["status_changed", users.jordan, "Status changed to investigating", 9],
+      ["status_changed", users.jordan, "Investigation started", 9],
       ["note", users.jordan, "Connection pool to the session store saturated after a traffic spike", 21],
       ["note", users.jordan, "Raised pool size from 20 to 60 and restarted auth pods", 35],
+      ["status_changed", users.jordan, "Mitigated — customer impact stopped: p95 back under 1s", 37],
       ["resolved", users.jordan, "Resolved: latency back under 400ms after pool resize", 48],
     ];
     for (const [type, actor, message, minutes] of events) {

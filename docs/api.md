@@ -92,7 +92,7 @@ Incidents are addressed by their per-organization **number** (`INC-42` → `42`)
 | GET | `/incidents?status=open\|all\|<status>&severity=&serviceId=` | — | Default `open` |
 | POST | `/incidents` | `{ title, severity, serviceId?, description? }` | Declare manually; caller becomes commander |
 | GET | `/incidents/:number` | — | Incident + `allowed_transitions`, alerts, timeline, responders, notifications, postmortem status |
-| POST | `/incidents/:number/status` | `{ status, message? }` | State-machine checked; 409 if not allowed |
+| POST | `/incidents/:number/status` | `{ status, message? }` | `acknowledged`, `investigating`, `mitigated` or `resolved`, state-machine checked. `409 { error, from, to, allowed }` if not allowed |
 | POST | `/incidents/:number/acknowledge` | — | Shorthand for `status: acknowledged` |
 | POST | `/incidents/:number/severity` | `{ severity }` | `sev1`–`sev4` |
 | POST | `/incidents/:number/notes` | `{ message }` | Timeline note |

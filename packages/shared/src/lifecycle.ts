@@ -2,21 +2,35 @@ import type { IncidentSeverity, IncidentStatus, ServiceStatus } from "./domain";
 
 // The incident state machine. Every status change — from a responder in the
 // UI, from an alert auto-resolving, from the API — is checked against this
-// table, so an incident can't, say, jump from resolved back to acknowledged.
+// table in the backend (and again by a trigger in the database, migration
+// 0004), so an incident can't, say, jump from resolved back to acknowledged.
 //
-//   triggered ──► acknowledged ──► investigating ──► resolved
-//       │              │                                ▲  │
-//       └──────────────┴────────────────────────────────┘  │
-//                         reopen: resolved ──► investigating
+//   TRIGGERED ──► ACKNOWLEDGED ──► INVESTIGATING ──► MITIGATED ──► RESOLVED
+//       │              │                 │                            ▲
+//       └──────────────┴─────────────────┴────────────────────────────┘
+//                      shortcuts straight to RESOLVED
+//
+// - Each step only moves forward; nothing goes back to TRIGGERED.
+// - MITIGATED = customer impact has stopped (failover, rollback, feature
+//   flag) but the cause isn't fixed yet. It's what time-to-mitigate and the
+//   postmortem's impact window are measured against.
+// - RESOLVED is final. If the problem comes back, the next alert opens a new
+//   incident (correlation only joins *open* incidents), which keeps each
+//   incident's timeline, metrics and postmortem honest.
 export const INCIDENT_TRANSITIONS: Record<IncidentStatus, readonly IncidentStatus[]> = {
-  triggered: ["acknowledged", "investigating", "resolved"],
+  triggered: ["acknowledged", "resolved"],
   acknowledged: ["investigating", "resolved"],
-  investigating: ["resolved"],
-  resolved: ["investigating"],
+  investigating: ["mitigated", "resolved"],
+  mitigated: ["resolved"],
+  resolved: [],
 };
 
 export function canTransition(from: IncidentStatus, to: IncidentStatus) {
   return INCIDENT_TRANSITIONS[from].includes(to);
+}
+
+export function allowedTransitions(from: IncidentStatus) {
+  return INCIDENT_TRANSITIONS[from];
 }
 
 export class InvalidTransitionError extends Error {
@@ -24,7 +38,15 @@ export class InvalidTransitionError extends Error {
     public from: IncidentStatus,
     public to: IncidentStatus
   ) {
-    super(`Cannot move an incident from '${from}' to '${to}'`);
+    const allowed = INCIDENT_TRANSITIONS[from];
+    super(
+      `Cannot move an incident from '${from}' to '${to}'` +
+        (allowed.length ? ` (allowed: ${allowed.join(", ")})` : ` ('${from}' is final)`)
+    );
+  }
+
+  get allowed() {
+    return INCIDENT_TRANSITIONS[this.from];
   }
 }
 
@@ -42,14 +64,16 @@ export function shouldEscalate(status: IncidentStatus) {
 }
 
 // A service's status is derived from its open incidents: any open SEV1
-// means an outage, any open SEV2 means degraded. Maintenance is a manual
-// override that alerts don't change.
+// means an outage, any open SEV2 means degraded. A mitigated incident's
+// impact has stopped, so it counts as degraded at most (still being fixed,
+// no longer down). Maintenance is a manual override that alerts don't change.
 export function deriveServiceStatus(
   current: ServiceStatus,
-  openIncidentSeverities: IncidentSeverity[]
+  openIncidents: { severity: IncidentSeverity; status: IncidentStatus }[]
 ): ServiceStatus {
   if (current === "maintenance") return "maintenance";
-  if (openIncidentSeverities.includes("sev1")) return "outage";
-  if (openIncidentSeverities.includes("sev2")) return "degraded";
+  const severe = (i: { severity: IncidentSeverity }) => i.severity === "sev1" || i.severity === "sev2";
+  if (openIncidents.some((i) => i.severity === "sev1" && i.status !== "mitigated")) return "outage";
+  if (openIncidents.some(severe)) return "degraded";
   return "operational";
 }

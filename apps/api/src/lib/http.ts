@@ -30,7 +30,12 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
     return res.status(err.status).json({ error: err.message });
   }
   if (err instanceof InvalidTransitionError) {
-    return res.status(409).json({ error: err.message });
+    return res.status(409).json({ error: err.message, from: err.from, to: err.to, allowed: err.allowed });
+  }
+  // The database's own transition guard (migration 0004) — only reachable if
+  // a code path skipped the state machine.
+  if ((err as { code?: string })?.code === "23514") {
+    return res.status(409).json({ error: (err as Error).message });
   }
   // Postgres unique violation that a handler didn't anticipate.
   if ((err as { code?: string })?.code === "23505") {

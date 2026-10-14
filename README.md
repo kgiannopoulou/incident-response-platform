@@ -3,7 +3,7 @@
 A small, PagerDuty/Opsgenie-style incident management platform. Monitoring tools send
 alerts; the platform deduplicates them, applies matching rules, opens incidents, pages
 the on-call responder and escalates if nobody answers. Responders then work the
-incident (acknowledge, investigate, resolve) on a live timeline, and when it's resolved
+incident (acknowledge, investigate, mitigate, resolve) on a live timeline, and when it's resolved
 a postmortem draft is generated from what actually happened.
 
 > "Our checkout service is down." — follow it from the first automated alert →
@@ -63,7 +63,8 @@ Monitoring tool / app ──POST /api/v1/alerts──► API key (hashed lookup)
 - **Matching rules** per service (first match wins): open an incident with a severity override,
   record only, or suppress (e.g. staging noise). Sensible default when no rule matches.
 - **Incident lifecycle** enforced by a state machine (`triggered → acknowledged → investigating →
-  resolved`, plus reopen), with row locking so two people clicking *Acknowledge* can't both win.
+  mitigated → resolved`, with shortcuts to `resolved`; `resolved` is final), validated in the API *and*
+  by a database trigger, with row locking so two people clicking *Acknowledge* can't both win.
 - **Escalation policies** — multi-level, users or whole teams, per-level delays; acknowledging stops it.
 - **Notifications** via a background worker (BullMQ) with retries/backoff; delivered to a
   Slack-compatible webhook, or logged when none is configured.
@@ -72,7 +73,7 @@ Monitoring tool / app ──POST /api/v1/alerts──► API key (hashed lookup)
 - **Timeline + audit trail** — every incident has an append-only timeline; every change in the
   organization is written to the audit log in the same transaction as the change.
 - **Postmortems** — drafted automatically on resolve (summary, impact, first signal, resolution,
-  MTTA/MTTR, alert/escalation counts, suggested action items, generated timeline), then edited and published.
+  time to acknowledge / mitigate / resolve, alert/escalation counts, suggested action items, generated timeline), then edited and published.
 - **Service health** derived from open incidents (SEV1 → outage, SEV2 → degraded), plus maintenance
   windows that record alerts without paging.
 - **Multi-tenant** (organizations), with `admin` / `responder` roles.
@@ -116,7 +117,7 @@ Details and trade-offs in [docs/architecture.md](docs/architecture.md).
    *open* incident per `(service, dedup_key)`. Concurrent alerts `INSERT … ON CONFLICT DO NOTHING`
    and the loser joins the winner's incident.
 2. **One place changes incident status.** `changeStatus()` row-locks the incident, checks the
-   shared state machine, stamps timestamps, stops escalation, writes timeline + audit, and on resolve
+   shared state machine (mirrored by a Postgres trigger, and a test keeps the two in sync), stamps timestamps, stops escalation, writes timeline + audit, and on resolve
    pages everyone who was paged and drafts the postmortem.
 3. **Side effects only after COMMIT.** Domain code records realtime events and jobs on an
    `Effects` collector; they're flushed after the transaction commits, so nobody is ever paged for

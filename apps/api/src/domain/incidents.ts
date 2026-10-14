@@ -37,6 +37,7 @@ export type IncidentRow = {
   highest_alert_severity: AlertSeverity | null;
   triggered_at: Date;
   acknowledged_at: Date | null;
+  mitigated_at: Date | null;
   resolved_at: Date | null;
 };
 
@@ -95,14 +96,11 @@ export async function recomputeServiceStatus(db: PoolClient, fx: Effects, servic
     [serviceId]
   );
   if (!rows[0]) return;
-  const { rows: open } = await db.query<{ severity: IncidentSeverity }>(
-    `SELECT severity FROM incidents WHERE service_id = $1 AND status <> 'resolved'`,
+  const { rows: open } = await db.query<{ severity: IncidentSeverity; status: IncidentStatus }>(
+    `SELECT severity, status FROM incidents WHERE service_id = $1 AND status <> 'resolved'`,
     [serviceId]
   );
-  const next = deriveServiceStatus(
-    rows[0].status,
-    open.map((r) => r.severity)
-  );
+  const next = deriveServiceStatus(rows[0].status, open);
   if (next !== rows[0].status) {
     await db.query(`UPDATE services SET status = $1 WHERE id = $2`, [next, serviceId]);
     fx.publish(rows[0].organization_id, { type: "service.updated", serviceId });
@@ -177,14 +175,17 @@ export async function createIncident(db: PoolClient, fx: Effects, input: NewInci
 const STATUS_MESSAGES: Record<IncidentStatus, string> = {
   triggered: "Triggered",
   acknowledged: "Acknowledged",
-  investigating: "Status changed to investigating",
+  investigating: "Investigation started",
+  mitigated: "Mitigated — customer impact stopped",
   resolved: "Resolved",
 };
 
 // The single place an incident's status changes. Validates the move against
 // the state machine (on the row-locked incident), stamps timestamps, stops
 // escalation once someone owns it, and on resolve notifies everyone who was
-// paged and drafts the postmortem.
+// paged and drafts the postmortem. Skipping ahead (triggered -> resolved)
+// still stamps acknowledged/mitigated times as "no later than now", so
+// metrics never have holes.
 export async function changeStatus(
   db: PoolClient,
   fx: Effects,
@@ -196,39 +197,27 @@ export async function changeStatus(
   const from = incident.status;
   assertTransition(from, to);
 
-  const reopening = from === "resolved";
   const { rows } = await db.query<IncidentRow>(
     `UPDATE incidents SET
        status = $2,
-       acknowledged_at = CASE WHEN $2 IN ('acknowledged', 'investigating') THEN COALESCE(acknowledged_at, now())
+       acknowledged_at = CASE WHEN $2 IN ('acknowledged', 'investigating', 'mitigated') THEN COALESCE(acknowledged_at, now())
                               ELSE acknowledged_at END,
+       mitigated_at = CASE WHEN $2 IN ('mitigated', 'resolved') THEN COALESCE(mitigated_at, now()) ELSE mitigated_at END,
        resolved_at = CASE WHEN $2 = 'resolved' THEN now() ELSE NULL END,
-       next_escalation_at = CASE WHEN $2 = 'triggered' THEN next_escalation_at ELSE NULL END,
+       next_escalation_at = NULL,
        commander_id = COALESCE(commander_id, $3)
      WHERE id = $1
      RETURNING *`,
     [incident.id, to, actor?.id ?? null]
-  ).catch((err) => {
-    // Reopening collides with a newer open incident for the same alert.
-    if (err.code === "23505") {
-      throw new HttpError(409, "Another open incident already tracks this alert; work that one instead");
-    }
-    throw err;
-  });
+  );
   const updated = rows[0];
 
   if (actor) {
     await addResponderRow(db, incident.id, actor.id, updated.commander_id === actor.id ? "commander" : "responder");
   }
 
-  const type: TimelineEventType = reopening
-    ? "reopened"
-    : to === "acknowledged"
-      ? "acknowledged"
-      : to === "resolved"
-        ? "resolved"
-        : "status_changed";
-  const base = reopening ? "Reopened" : STATUS_MESSAGES[to];
+  const type: TimelineEventType = to === "acknowledged" ? "acknowledged" : to === "resolved" ? "resolved" : "status_changed";
+  const base = STATUS_MESSAGES[to];
   await addTimeline(db, fx, updated, type, message ? `${base}: ${message}` : base, actor, { from, to });
 
   if (to === "resolved") {
@@ -248,7 +237,7 @@ export async function changeStatus(
   await audit(db, {
     organizationId: updated.organization_id,
     actorUserId: actor?.id ?? null,
-    action: `incident.${reopening ? "reopen" : to}`,
+    action: `incident.${to}`,
     entityType: "incident",
     entityId: updated.id,
     details: { number: updated.number, from, to, message: message ?? null },
@@ -366,6 +355,7 @@ export async function generatePostmortem(
       serviceName: svc[0]?.name ?? null,
       triggeredAt: incident.triggered_at,
       acknowledgedAt: incident.acknowledged_at,
+      mitigatedAt: incident.mitigated_at,
       resolvedAt: incident.resolved_at,
     },
     alerts: alerts.map((a) => ({ title: a.title, severity: a.severity, source: a.source, receivedAt: a.received_at })),

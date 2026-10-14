@@ -13,7 +13,8 @@ export type AlertStatus = (typeof ALERT_STATUSES)[number];
 export const INCIDENT_SEVERITIES = ["sev1", "sev2", "sev3", "sev4"] as const;
 export type IncidentSeverity = (typeof INCIDENT_SEVERITIES)[number];
 
-export const INCIDENT_STATUSES = ["triggered", "acknowledged", "investigating", "resolved"] as const;
+// In lifecycle order; see lifecycle.ts for which moves are allowed.
+export const INCIDENT_STATUSES = ["triggered", "acknowledged", "investigating", "mitigated", "resolved"] as const;
 export type IncidentStatus = (typeof INCIDENT_STATUSES)[number];
 
 export const SERVICE_STATUSES = ["operational", "degraded", "outage", "maintenance"] as const;
@@ -70,7 +71,6 @@ export const TIMELINE_EVENT_TYPES = [
   "commander_assigned",
   "note",
   "resolved",
-  "reopened",
   "postmortem_generated",
 ] as const;
 export type TimelineEventType = (typeof TIMELINE_EVENT_TYPES)[number];

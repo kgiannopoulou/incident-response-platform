@@ -1,6 +1,7 @@
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { TEST_KEYS } from "@irp/database/testing";
+import { canTransition, INCIDENT_STATUSES, type IncidentStatus } from "@irp/shared";
 import { createTestContext, type TestContext } from "./helpers";
 
 let t: TestContext;
@@ -40,6 +41,11 @@ describe("incident lifecycle", () => {
 
     await api().post("/api/v1/incidents/1/status").set(sam).send({ status: "investigating" }).expect(200);
     await api().post("/api/v1/incidents/1/notes").set(sam).send({ message: "Rolled back deploy 1.4.2" }).expect(201);
+    const mitigated = await api().post("/api/v1/incidents/1/status").set(sam).send({ status: "mitigated" });
+    expect(mitigated.body.incident).toMatchObject({ status: "mitigated" });
+    expect(mitigated.body.incident.mitigated_at).toBeTruthy();
+    // Impact stopped: the SEV1's service is no longer "down", just degraded.
+    expect((await api().get("/api/v1/incidents/1").set(sam)).body.incident.service_status).toBe("degraded");
     await api()
       .post("/api/v1/incidents/1/status")
       .set(sam)
@@ -53,6 +59,7 @@ describe("incident lifecycle", () => {
       "acknowledged",
       "status_changed",
       "note",
+      "status_changed",
       "resolved",
       "postmortem_generated",
     ]);
@@ -61,20 +68,68 @@ describe("incident lifecycle", () => {
     const pm = await api().get("/api/v1/incidents/1/postmortem").set(sam);
     expect(pm.body.postmortem).toMatchObject({ status: "draft", resolution: "Resolved: rollback fixed it (Sam)" });
     expect(pm.body.postmortem.metrics.alertCount).toBe(1);
+    expect(pm.body.postmortem.metrics.timeToMitigateSeconds).toBeLessThanOrEqual(pm.body.postmortem.metrics.timeToResolveSeconds);
 
     const audit = await api().get("/api/v1/audit-log").set(await t.as("alex"));
     expect(audit.body.entries.map((e: { action: string }) => e.action)).toEqual(
-      expect.arrayContaining(["incident.create", "incident.acknowledged", "incident.investigating", "incident.note", "incident.resolved"])
+      expect.arrayContaining(["incident.create", "incident.acknowledged", "incident.investigating", "incident.note", "incident.mitigated", "incident.resolved"])
     );
   });
 
-  it("rejects transitions the state machine forbids", async () => {
+  it("rejects transitions the state machine forbids, with the allowed alternatives", async () => {
     await t.alert(TEST_KEYS.checkout, critical);
     const sam = await t.as("sam");
+    const skip = await api().post("/api/v1/incidents/1/status").set(sam).send({ status: "investigating" });
+    expect(skip.status).toBe(409);
+    expect(skip.body).toMatchObject({ from: "triggered", to: "investigating", allowed: ["acknowledged", "resolved"] });
+
+    await api().post("/api/v1/incidents/1/acknowledge").set(sam).expect(200);
     await api().post("/api/v1/incidents/1/status").set(sam).send({ status: "investigating" }).expect(200);
     const back = await api().post("/api/v1/incidents/1/status").set(sam).send({ status: "acknowledged" });
     expect(back.status).toBe(409);
     expect(back.body.error).toMatch(/investigating.*acknowledged/);
+    const detail = await api().get("/api/v1/incidents/1").set(sam);
+    expect(detail.body.incident.allowed_transitions).toEqual(["mitigated", "resolved"]);
+  });
+
+  it("treats resolved as final: no reopening, the next alert opens a new incident", async () => {
+    await t.alert(TEST_KEYS.checkout, critical);
+    const sam = await t.as("sam");
+    const resolved = await api().post("/api/v1/incidents/1/status").set(sam).send({ status: "resolved" });
+    // Skipping straight to resolved: impact ended no later than resolution.
+    expect(resolved.body.incident.mitigated_at).toBe(resolved.body.incident.resolved_at);
+
+    for (const status of ["triggered", "acknowledged", "investigating", "mitigated"]) {
+      const res = await api().post("/api/v1/incidents/1/status").set(sam).send({ status });
+      expect(res.status).toBe(409);
+      expect(res.body.error).toContain("'resolved' is final");
+    }
+    expect((await api().get("/api/v1/incidents/1").set(sam)).body.incident.allowed_transitions).toEqual([]);
+
+    const recurrence = await t.alert(TEST_KEYS.checkout, critical);
+    expect(recurrence.body).toMatchObject({ decision: "incident_created", incident: { number: 2 } });
+  });
+
+  it("enforces the same transition table inside the database", async () => {
+    // Every (from, to) pair the shared state machine forbids must also be
+    // refused by the trigger from migration 0004, and every allowed one accepted.
+    const { rows } = await t.deps.pool.query<{ from_status: IncidentStatus; to_status: IncidentStatus; allowed: boolean }>(
+      `SELECT f AS from_status, t AS to_status, incident_transition_allowed(f, t) AS allowed
+       FROM unnest($1::text[]) f CROSS JOIN unnest($1::text[]) t`,
+      [INCIDENT_STATUSES]
+    );
+    expect(rows).toHaveLength(INCIDENT_STATUSES.length ** 2);
+    for (const r of rows) {
+      expect(`${r.from_status}->${r.to_status}: ${r.allowed}`).toBe(
+        `${r.from_status}->${r.to_status}: ${canTransition(r.from_status, r.to_status)}`
+      );
+    }
+
+    await t.alert(TEST_KEYS.checkout, critical);
+    await t.deps.pool.query(`UPDATE incidents SET status = 'resolved'`);
+    await expect(t.deps.pool.query(`UPDATE incidents SET status = 'acknowledged'`)).rejects.toThrow(
+      "Invalid incident transition: resolved -> acknowledged"
+    );
   });
 
   it("serializes concurrent acknowledgements: exactly one wins", async () => {
@@ -85,18 +140,6 @@ describe("incident lifecycle", () => {
       api().post("/api/v1/incidents/1/acknowledge").set(jordan),
     ]);
     expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
-  });
-
-  it("reopens a resolved incident and refuses to reopen when a newer one tracks the alert", async () => {
-    await t.alert(TEST_KEYS.checkout, critical);
-    const sam = await t.as("sam");
-    await api().post("/api/v1/incidents/1/status").set(sam).send({ status: "resolved" }).expect(200);
-    await api().post("/api/v1/incidents/1/status").set(sam).send({ status: "investigating" }).expect(200);
-    await api().post("/api/v1/incidents/1/status").set(sam).send({ status: "resolved" }).expect(200);
-
-    await t.alert(TEST_KEYS.checkout, critical); // INC-2 for the same dedup key
-    const reopen = await api().post("/api/v1/incidents/1/status").set(sam).send({ status: "investigating" });
-    expect(reopen.status).toBe(409);
   });
 
   it("supports manually declared incidents with severity changes and responders", async () => {

@@ -24,6 +24,7 @@ const STATUS_STYLE: Record<IncidentStatus, string> = {
   triggered: "bg-red-500 text-white",
   acknowledged: "bg-amber-400 text-zinc-950",
   investigating: "bg-violet-500 text-white",
+  mitigated: "bg-sky-500 text-white",
   resolved: "bg-emerald-600 text-white",
 };
 

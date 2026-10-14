@@ -127,6 +127,7 @@ export type Postmortem = {
   action_items: { description: string; owner: string; done: boolean }[];
   metrics: {
     timeToAcknowledgeSeconds: number | null;
+    timeToMitigateSeconds?: number | null;
     timeToResolveSeconds: number | null;
     alertCount: number;
     escalations: number;

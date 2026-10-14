@@ -14,6 +14,7 @@ export type PostmortemInput = {
     serviceName: string | null;
     triggeredAt: Date;
     acknowledgedAt: Date | null;
+    mitigatedAt?: Date | null;
     resolvedAt: Date | null;
   };
   alerts: { title: string; severity: string; source: string; receivedAt: Date }[];
@@ -23,6 +24,9 @@ export type PostmortemInput = {
 
 export type PostmortemMetrics = {
   timeToAcknowledgeSeconds: number | null;
+  // Customer impact window: until mitigation, or until resolution when the
+  // incident was never marked mitigated.
+  timeToMitigateSeconds: number | null;
   timeToResolveSeconds: number | null;
   alertCount: number;
   escalations: number;
@@ -60,6 +64,7 @@ export function buildPostmortemDraft(input: PostmortemInput): PostmortemDraft {
   const ref = incidentRef(incident.number);
   const metrics: PostmortemMetrics = {
     timeToAcknowledgeSeconds: seconds(incident.triggeredAt, incident.acknowledgedAt),
+    timeToMitigateSeconds: seconds(incident.triggeredAt, incident.mitigatedAt ?? incident.resolvedAt),
     timeToResolveSeconds: seconds(incident.triggeredAt, incident.resolvedAt),
     alertCount: alerts.length,
     escalations: timeline.filter((e) => e.type === "escalated").length,
@@ -78,7 +83,10 @@ export function buildPostmortemDraft(input: PostmortemInput): PostmortemDraft {
   const firstAlert = [...alerts].sort((a, b) => a.receivedAt.getTime() - b.receivedAt.getTime())[0];
   const sources = [...new Set(alerts.map((a) => a.source))];
   const impact =
-    `${service} was impacted for ${formatDuration(metrics.timeToResolveSeconds)}. ` +
+    `${service} was impacted for ${formatDuration(metrics.timeToMitigateSeconds)}` +
+    (incident.mitigatedAt && incident.resolvedAt && incident.mitigatedAt < incident.resolvedAt
+      ? ` (mitigated, then fully resolved after ${formatDuration(metrics.timeToResolveSeconds)}). `
+      : ". ") +
     `${alerts.length} alert${alerts.length === 1 ? "" : "s"} fired` +
     (sources.length ? ` from ${sources.join(", ")}` : "") +
     ". Describe the customer-facing impact here (affected users, failed requests, revenue).";

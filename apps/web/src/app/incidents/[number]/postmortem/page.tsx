@@ -118,9 +118,10 @@ export default function PostmortemPage() {
       </header>
       {message && (message.kind === "error" ? <ErrorState message={message.text} /> : <p className="text-sm text-emerald-400">{message.text}</p>)}
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
         {[
           ["Time to acknowledge", duration(m.timeToAcknowledgeSeconds)],
+          ["Time to mitigate", duration(m.timeToMitigateSeconds)],
           ["Time to resolve", duration(m.timeToResolveSeconds)],
           ["Alerts", m.alertCount],
           ["Escalations", m.escalations],

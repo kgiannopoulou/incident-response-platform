@@ -12,6 +12,7 @@ describe("buildPostmortemDraft", () => {
       serviceName: "Checkout API",
       triggeredAt: t(0),
       acknowledgedAt: t(20),
+      mitigatedAt: t(45),
       resolvedAt: t(65),
     },
     alerts: [
@@ -31,6 +32,7 @@ describe("buildPostmortemDraft", () => {
   it("computes response metrics", () => {
     expect(draft.metrics).toEqual({
       timeToAcknowledgeSeconds: 1200,
+      timeToMitigateSeconds: 2700,
       timeToResolveSeconds: 3900,
       alertCount: 2,
       escalations: 1,
@@ -43,6 +45,7 @@ describe("buildPostmortemDraft", () => {
     expect(draft.summary).toContain("INC-42");
     expect(draft.summary).toContain("resolved after 1h 5m");
     expect(draft.impact).toContain("prometheus, datadog");
+    expect(draft.impact).toContain("impacted for 45m 0s (mitigated, then fully resolved after 1h 5m)");
     expect(draft.rootCause).toContain("5xx rate above 5%");
     expect(draft.resolution).toBe("Resolved: rollback restored error rate (Alex)");
   });
