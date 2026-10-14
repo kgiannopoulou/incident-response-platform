@@ -85,6 +85,8 @@ export async function attachAlert(
     type: "incident.updated",
     incidentId: incident.id,
     number: incident.number,
+    status: updated.status,
+    severity: updated.severity,
   });
   return updated;
 }

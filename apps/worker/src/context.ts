@@ -1,7 +1,8 @@
 import type { Pool } from "pg";
 import type { Queue } from "bullmq";
 import type { Redis } from "ioredis";
-import { orgChannel, type RealtimeEvent } from "@irp/shared";
+import type { RealtimeEvent } from "@irp/shared";
+import { publishRealtime } from "@irp/shared/realtime";
 
 export type WorkerContext = {
   pool: Pool;
@@ -32,7 +33,7 @@ export function createSender(webhookUrl: string | undefined): NotificationSender
 }
 
 export async function publish(ctx: Pick<WorkerContext, "redis">, organizationId: number, event: RealtimeEvent) {
-  await ctx.redis.publish(orgChannel(organizationId), JSON.stringify(event)).catch((err) => {
+  await publishRealtime(ctx.redis, organizationId, event).catch((err) => {
     console.error("Realtime publish failed:", err);
   });
 }

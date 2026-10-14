@@ -1,5 +1,6 @@
 import { withTransaction, type PoolClient } from "@irp/database";
-import { deliverJobOptions, orgChannel, QUEUES, type RealtimeEvent } from "@irp/shared";
+import { deliverJobOptions, QUEUES, type RealtimeEvent } from "@irp/shared";
+import { publishRealtime } from "@irp/shared/realtime";
 import type { Deps } from "../deps";
 
 // Side effects that must only happen once the database transaction has
@@ -32,7 +33,7 @@ export class Effects {
   async flush(deps: Pick<Deps, "redis" | "queues">) {
     try {
       for (const { organizationId, event } of this.events) {
-        await deps.redis.publish(orgChannel(organizationId), JSON.stringify(event));
+        await publishRealtime(deps.redis, organizationId, event);
       }
       for (const id of this.notificationIds) {
         await deps.queues.notifications.add(

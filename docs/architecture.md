@@ -286,12 +286,47 @@ the error after the last one and shown in the incident's paging panel.
 
 ## Realtime updates
 
-The browser opens one `EventSource` to `/api/v1/stream` (cookie-authenticated). The API and the
-worker publish small "something changed" events to `irp:events:org:<id>` on Redis; each API process
-holds one pattern subscription and writes each event only to that organization's connections.
-Clients re-fetch the affected resource rather than trusting event payloads, which keeps events tiny
-and the REST API the single source of truth. Heartbeat comments keep proxies from closing idle
-streams, and `retry: 3000` makes browsers reconnect automatically.
+Open the same incident in two windows. When window A acknowledges, window B changes from
+**TRIGGERED** to **ACKNOWLEDGED** immediately, with a "Alex Morgan updated this incident" notice, and
+no refresh.
+
+**Why SSE rather than WebSockets.** Incident dashboards mostly *consume* server-generated updates;
+everything the browser *does* is already a REST call with validation, auth and audit. Server-Sent
+Events are plain HTTP (the session cookie, CORS, proxies and the auth middleware just work), and
+the browser's `EventSource` brings automatic reconnection and `Last-Event-ID` for free. A
+bidirectional socket would add a second protocol to secure without a use for the extra direction.
+
+```
+API / worker ──EVAL──► Redis: XADD irp:stream:org:<id>  (id 1760429748123-0, last ~1000 kept)
+                              PUBLISH irp:events:org:<id> "1760429748123-0 {json}"
+                                        │ pattern subscription, one per API process
+                                        ▼
+                              RealtimeHub ──► id: 1760429748123-0
+                                              data: {"type":"incident.updated","number":2,
+                                                     "status":"acknowledged","actor":"Sam"}
+```
+
+- **One publish path.** API and worker both call `publishRealtime()` (`@irp/shared/realtime`), a
+  Lua script that appends the event to the organization's Redis Stream and publishes it on the
+  organization's channel *atomically*, so pub/sub order always matches stream order even with many
+  publishers. Only after `COMMIT` (see below).
+- **Tenant isolation.** One channel and stream per organization; each SSE connection only receives
+  its organization's events (tested).
+- **No missed updates across reconnects.** Every SSE message has `id:` = its stream id. On a
+  short drop `EventSource` reconnects and sends `Last-Event-ID`; the hub replays the events after it
+  from the stream (`XRANGE (id +`) and only then switches the connection to live messages — live
+  messages arriving during the replay are held and de-duplicated, so nothing is lost or reordered in
+  between. If the API was down long enough for the browser to give up, the client opens a new
+  `EventSource` with backoff and passes `?lastEventId=`.
+- **Resync when history is gone.** If the requested id is no longer in the (capped) stream, the
+  server sends `{"type":"resync"}` and every live view re-fetches. Delivery is therefore
+  *at-least-once*: a hint may arrive twice, which is harmless.
+- **Hints, not state.** Events are small "something changed" hints; clients re-fetch the resource
+  so the REST API stays the single source of truth. Incident events also carry the new `status` /
+  `severity` and the `actor`, which the incident page applies instantly while its re-fetch is in
+  flight, and uses for the "updated by" notice.
+- Heartbeat comments every 25 s keep proxies from closing idle streams; `retry: 3000` sets the
+  browser's reconnect delay. `/health` reports the number of open SSE connections.
 
 ## Multi-tenancy and authorization
 

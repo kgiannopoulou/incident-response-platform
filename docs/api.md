@@ -141,6 +141,19 @@ stores a SHA-256 hash and a display prefix (`ir_live_a8f83e7c`).
 | GET | `/audit-log?before=<id>` | Admin only; 50 per page, keyset pagination via `nextBefore` |
 | GET | `/stream` | Server-Sent Events: `incident.created`, `incident.updated`, `timeline.added`, `service.updated`, `alert.received` |
 
+## Live updates
+
+`GET /stream` *(session)* — Server-Sent Events for the caller's organization.
+
+```
+id: 1760429748123-0
+data: {"type":"incident.updated","incidentId":2,"number":2,"status":"acknowledged","severity":"sev1","actor":"Sam Rivera"}
+```
+
+Event types: `incident.created`, `incident.updated`, `timeline.added`, `service.updated`,
+`alert.received`; control messages `connected` and `resync` (re-fetch everything). Reconnect with the
+`Last-Event-ID` header (browsers do this automatically) or `?lastEventId=` to replay missed events.
+
 ## Health
 
 `GET /health` (no auth) → `{ ok, postgres, redis, sseClients }`, 503 if a dependency is down.

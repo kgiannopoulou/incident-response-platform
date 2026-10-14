@@ -1,5 +1,6 @@
 import { Router } from "express";
 import type { Deps } from "../deps";
+import { isStreamId } from "@irp/shared/realtime";
 import { requireAdmin } from "../lib/auth";
 
 // Read-only organization data: people, teams, escalation policies, the
@@ -82,7 +83,12 @@ export function orgRouter(deps: Deps) {
 
   // Live updates. EventSource sends the session cookie, so the same auth
   // middleware applies; the hub writes every event for this organization.
-  router.get("/stream", (req, res) => {
+  // On reconnect the browser sends Last-Event-ID (or, for a brand-new
+  // EventSource after a hard failure, ?lastEventId=) and the hub replays
+  // what was missed first.
+  router.get("/stream", async (req, res) => {
+    const requested = req.get("last-event-id") ?? req.query.lastEventId;
+    const lastEventId = isStreamId(requested) ? requested : null;
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache, no-transform",
@@ -91,7 +97,7 @@ export function orgRouter(deps: Deps) {
     });
     res.write(`retry: 3000\n\n`);
     res.write(`data: ${JSON.stringify({ type: "connected" })}\n\n`);
-    deps.hub.add(req.user!.organizationId, res);
+    await deps.hub.add(req.user!.organizationId, res, lastEventId);
   });
 
   return router;

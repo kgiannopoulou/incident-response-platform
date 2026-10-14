@@ -15,7 +15,7 @@ const queues = {
   notifications: new Queue(QUEUES.notifications, { connection }),
   escalations: new Queue(QUEUES.escalations, { connection }),
 };
-const hub = new RealtimeHub(subscriber);
+const hub = new RealtimeHub(subscriber, redis.duplicate());
 const rateLimiter = new RateLimiter(redis, { authFailuresPerMinute: env.authFailuresPerMinute });
 
 const app = createApp({

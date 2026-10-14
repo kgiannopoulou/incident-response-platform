@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./dedup": "./src/dedup.ts",
-    "./crypto": "./src/crypto.ts"
+    "./crypto": "./src/crypto.ts",
+    "./realtime": "./src/realtime.ts"
   },
   "scripts": {
     "typecheck": "tsc -p .",

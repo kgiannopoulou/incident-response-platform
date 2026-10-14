@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { incidentRef } from "@irp/shared";
 import { ALERT_SEVERITY_STYLE } from "@/components/alert-feed";
 import { IncidentHeader } from "@/components/incident/incident-header";
@@ -12,6 +12,7 @@ import { Card, cx, Empty, ErrorState, Loading } from "@/components/ui";
 import { post } from "@/lib/api";
 import { useUser } from "@/lib/auth";
 import { clock, timeAgo } from "@/lib/format";
+import { useLiveUpdates, type LiveEvent } from "@/lib/live";
 import { useApi } from "@/lib/use-api";
 import type { IncidentDetail, User } from "@/lib/types";
 
@@ -22,7 +23,10 @@ import type { IncidentDetail, User } from "@/lib/types";
 //   │                                        │ postmortem                       │
 //   └────────────────────────────────────────┴──────────────────────────────────┘
 //
-// Everything re-fetches when a realtime event for this incident arrives.
+// Everything re-fetches when a realtime event for this incident arrives; a
+// status change made by someone else is applied and announced instantly.
+// Open the same incident in two windows, acknowledge in one, and the other
+// flips from TRIGGERED to ACKNOWLEDGED without a reload.
 export default function IncidentPage() {
   const number = Number(useParams<{ number: string }>().number);
   const me = useUser();
@@ -30,6 +34,7 @@ export default function IncidentPage() {
   const users = useApi<{ users: User[] }>("/users");
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const live = useLiveChange(number, me?.name ?? null);
 
   async function act(path: string, body?: unknown) {
     setBusy(true);
@@ -48,7 +53,10 @@ export default function IncidentPage() {
 
   if (detail.error) return <ErrorState message={detail.error} onRetry={detail.reload} />;
   if (!detail.data) return <Loading />;
-  const { incident, timeline, timeline_integrity, alerts, responders, notifications, postmortem } = detail.data;
+  const { incident: fetched, timeline, timeline_integrity, alerts, responders, notifications, postmortem } = detail.data;
+  // A live event's status/severity wins until the re-fetch it triggered lands
+  // (the re-fetch can only be as new or newer).
+  const incident = live.patch && live.patch.since > detail.loadedAt ? { ...fetched, ...live.patch.fields } : fetched;
   const open = incident.status !== "resolved";
 
   return (
@@ -59,6 +67,12 @@ export default function IncidentPage() {
         </Link>{" "}
         / {incidentRef(incident.number)}
       </div>
+
+      {live.message && (
+        <div role="status" className="rounded-md border border-sky-500/40 bg-sky-500/10 px-4 py-2 text-sm text-sky-200">
+          ⚡ {live.message} <span className="text-sky-300/60">· live update</span>
+        </div>
+      )}
 
       <IncidentHeader incident={incident} busy={busy} error={actionError} act={act} />
 
@@ -148,4 +162,38 @@ export default function IncidentPage() {
       </div>
     </div>
   );
+}
+
+type LivePatch = { since: number; fields: Partial<Pick<IncidentDetail["incident"], "status" | "severity">> };
+
+// Watches the stream for changes to this incident made by other people:
+// returns the new status/severity to show right away, and a short message
+// ("Alex Morgan changed status to acknowledged") that fades after 6 s.
+function useLiveChange(number: number, myName: string | null) {
+  const [patch, setPatch] = useState<LivePatch | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  useLiveUpdates(
+    useCallback(
+      (event: LiveEvent) => {
+        if (event.type !== "incident.updated" || event.number !== number) return;
+        const fields: LivePatch["fields"] = {};
+        if (event.status) fields.status = event.status;
+        if (event.severity) fields.severity = event.severity;
+        setPatch({ since: Date.now(), fields });
+        if (event.actor && event.actor !== myName && event.status) {
+          setMessage(`${event.actor} updated this incident: ${event.status}`);
+        }
+      },
+      [number, myName]
+    )
+  );
+
+  useEffect(() => {
+    if (!message) return;
+    const timer = setTimeout(() => setMessage(null), 6000);
+    return () => clearTimeout(timer);
+  }, [message]);
+
+  return { patch, message };
 }

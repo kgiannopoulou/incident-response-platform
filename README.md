@@ -72,8 +72,11 @@ Monitoring tool / app ──POST /api/v1/alerts──► API key (hashed lookup)
   the automatic schedule, *Escalate* pages the next level immediately.
 - **Notifications** via a background worker (BullMQ) with retries/backoff; delivered to a
   Slack-compatible webhook, or logged when none is configured.
-- **Live alert feed** (🔴 CRITICAL · 🟠 HIGH · 🟡 WARNING · 🔵 INFO, "12 sec ago") and **live updates** over Server-Sent Events, fanned out through Redis pub/sub so events from the
-  API *and* the worker reach every open browser.
+- **Live alert feed** (🔴 CRITICAL · 🟠 HIGH · 🟡 WARNING · 🔵 INFO, "12 sec ago") and **real-time
+  updates** over Server-Sent Events: acknowledge in one window and every other window showing the
+  incident flips to ACKNOWLEDGED instantly ("Alex Morgan updated this incident"). Events from the API
+  *and* the worker go through Redis (pub/sub + a capped Stream), carry ids, and are **replayed after a
+  reconnect** via `Last-Event-ID`, with a resync fallback.
 - **Immutable timeline + audit trail** — every action is a typed timeline event (`INCIDENT_CREATED`,
   `STATUS_CHANGED {from,to}`, `NOTE_ADDED`, …). The timeline is append-only — no API to edit it, and
   Postgres triggers reject `UPDATE`/`DELETE` — and hash-chained, so tampering is detectable. Every
@@ -146,6 +149,10 @@ Details and trade-offs in [docs/architecture.md](docs/architecture.md).
 8. **The timeline is an append-only, hash-chained audit log.** History is never edited: no code path
    updates events, database triggers refuse `UPDATE`/`DELETE`, and each event's SHA-256 covers its
    predecessor, so `timeline_verify()` pinpoints any row changed behind the application's back.
+9. **SSE, not WebSockets — with replay.** Dashboards consume server-generated updates, so SSE (plain
+   HTTP, cookie auth, built-in reconnects) is the simpler transport. Each event is appended to a capped
+   Redis Stream and published in one atomic Lua script; its stream id is the SSE event id, so a browser
+   that reconnects with `Last-Event-ID` gets exactly what it missed.
 
 ## Quick start
 

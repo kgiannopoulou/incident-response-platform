@@ -41,11 +41,14 @@ export type IncidentRow = {
   resolved_at: Date | null;
 };
 
-const changed = (fx: Effects, incident: IncidentRow) =>
+const changed = (fx: Effects, incident: IncidentRow, actor: Actor = null) =>
   fx.publish(incident.organization_id, {
     type: "incident.updated",
     incidentId: incident.id,
     number: incident.number,
+    status: incident.status,
+    severity: incident.severity,
+    ...(actor ? { actor: actor.name } : {}),
   });
 
 // Appends to the incident's timeline, the only way events are written.
@@ -170,7 +173,13 @@ export async function createIncident(db: PoolClient, fx: Effects, input: NewInci
     entityId: incident.id,
     details: { number: incident.number, severity: incident.severity, title: incident.title },
   });
-  fx.publish(incident.organization_id, { type: "incident.created", incidentId: incident.id, number: incident.number });
+  fx.publish(incident.organization_id, {
+    type: "incident.created",
+    incidentId: incident.id,
+    number: incident.number,
+    status: incident.status,
+    severity: incident.severity,
+  });
   if (incident.next_escalation_at) fx.escalate(incident.id);
   return incident;
 }
@@ -246,7 +255,7 @@ export async function changeStatus(
     entityId: updated.id,
     details: { number: updated.number, from, to, message: message ?? null },
   });
-  changed(fx, updated);
+  changed(fx, updated, actor);
   return updated;
 }
 
@@ -281,7 +290,7 @@ export async function changeSeverity(
     entityId: incident.id,
     details: { from: incident.severity, to: severity, reason: reason ?? null },
   });
-  changed(fx, rows[0]);
+  changed(fx, rows[0], actor);
   return rows[0];
 }
 
@@ -381,7 +390,7 @@ export async function escalateNow(db: PoolClient, fx: Effects, incident: Inciden
     entityId: updated.id,
     details: { level: current.level, notified: targets.length, manual: true },
   });
-  changed(fx, updated);
+  changed(fx, updated, actor);
   return updated;
 }
 

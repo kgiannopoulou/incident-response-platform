@@ -24,7 +24,10 @@ export async function createTestContext() {
     notifications: new Queue(QUEUES.notifications, { connection }),
     escalations: new Queue(QUEUES.escalations, { connection }),
   };
-  const hub = new RealtimeHub(new Redis(redisUrl, { maxRetriesPerRequest: null }));
+  const hub = new RealtimeHub(
+    new Redis(redisUrl, { maxRetriesPerRequest: null }),
+    new Redis(redisUrl, { maxRetriesPerRequest: null })
+  );
   const deps: Deps = {
     pool,
     redis,

@@ -2,15 +2,17 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "./api";
-import { useLiveUpdates } from "./live";
+import { useLiveUpdates, type LiveEvent } from "./live";
 import type { RealtimeEvent } from "@irp/shared";
 
 // Loads `path` and keeps it fresh: re-fetches whenever a realtime event
-// matching `refreshOn` arrives. Exposes the error so every page can show a
+// matching `refreshOn` arrives, and always after a "resync" (the live
+// stream lost events it couldn't replay). Exposes the error so every page can show a
 // message with a Retry button instead of an endless "Loading…".
 export function useApi<T>(path: string | null, refreshOn?: (event: RealtimeEvent) => boolean) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loadedAt, setLoadedAt] = useState(0); // Date.now() of the last successful load
   const [version, setVersion] = useState(0);
 
   const reload = useCallback(() => setVersion((v) => v + 1), []);
@@ -22,6 +24,7 @@ export function useApi<T>(path: string | null, refreshOn?: (event: RealtimeEvent
       .then((result) => {
         if (ignore) return;
         setData(result);
+        setLoadedAt(Date.now());
         setError(null);
       })
       .catch((err) => {
@@ -40,12 +43,12 @@ export function useApi<T>(path: string | null, refreshOn?: (event: RealtimeEvent
   });
   useLiveUpdates(
     useCallback(
-      (event: RealtimeEvent) => {
-        if (refreshOnRef.current?.(event)) reload();
+      (event: LiveEvent) => {
+        if (event.type === "resync" || refreshOnRef.current?.(event)) reload();
       },
       [reload]
     )
   );
 
-  return { data, error, reload, loading: data === null && error === null };
+  return { data, error, reload, loadedAt, loading: data === null && error === null };
 }
