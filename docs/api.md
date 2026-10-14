@@ -85,7 +85,9 @@ Newest first, with service slug, matched rule, the sending key's prefix and the 
 
 ## Incidents
 
-Incidents are addressed by their per-organization **number** (`INC-42` → `42`).
+Incidents are addressed by their per-organization **number** (`INC-42` → `42`). Users who are an
+*observer* on an incident get `403` from the endpoints that change it (status, severity, escalate,
+notes) until they switch to responder.
 
 | Method | Path | Body | Notes |
 | --- | --- | --- | --- |
@@ -98,7 +100,9 @@ Incidents are addressed by their per-organization **number** (`INC-42` → `42`)
 | POST | `/incidents/:number/escalate` | — | Page the next escalation level now (also after acknowledgement). `409` when resolved, no policy, or every level already paged |
 | POST | `/incidents/:number/severity` | `{ severity }` | `sev1`–`sev4` |
 | POST | `/incidents/:number/notes` | `{ message }` | Timeline note |
-| POST | `/incidents/:number/responders` | `{ userId, role? }` | `role`: `responder` (default) or `commander` |
+| POST | `/incidents/:number/responders` | `{ userId?, role? }` | Join (omit `userId`) or add someone; `role`: `responder` (default), `observer` or `commander`. `201`, or `200 { changed: false }` if nothing changed |
+| PATCH | `/incidents/:number/responders/:userId` | `{ role }` | Switch role / hand over command. Others' roles: commander or admin only |
+| DELETE | `/incidents/:number/responders/:userId` | — | Leave, or remove someone (commander or admin). The commander must hand over first (`409`) |
 | GET | `/incidents/:number/postmortem` | — | |
 | POST | `/incidents/:number/postmortem` | — | Draft / refresh metrics + timeline (resolved incidents only) |
 | PUT | `/incidents/:number/postmortem` | `{ summary?, impact?, rootCause?, resolution?, actionItems?, status? }` | `status: "published"` to publish |

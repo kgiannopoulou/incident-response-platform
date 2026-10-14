@@ -3,6 +3,7 @@ import {
   ALERT_SEVERITIES,
   INCIDENT_SEVERITIES,
   INCIDENT_STATUSES,
+  RESPONDER_ROLES,
   SERVICE_STATUSES,
 } from "./domain";
 
@@ -89,9 +90,14 @@ export const noteSchema = z.object({
   message: z.string().trim().min(1).max(5000),
 });
 
+// Omit userId to join yourself.
 export const addResponderSchema = z.object({
-  userId: z.number().int().positive(),
-  role: z.enum(["commander", "responder"]).default("responder"),
+  userId: z.number().int().positive().optional(),
+  role: z.enum(RESPONDER_ROLES).default("responder"),
+});
+
+export const updateResponderSchema = z.object({
+  role: z.enum(RESPONDER_ROLES),
 });
 
 const slugSchema = z

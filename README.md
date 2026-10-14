@@ -9,6 +9,11 @@ a postmortem draft is generated from what actually happened.
 > "Our checkout service is down." — follow it from the first automated alert →
 > incident → page → escalation → acknowledgement → resolution → postmortem.
 
+![Incident page](docs/screenshots/incident-page.jpg)
+
+*The incident page: 4 correlated alerts in one SEV1, state-machine actions, responders by role,
+and an append-only, hash-verified timeline that updates live.*
+
 ![Dashboard](docs/screenshots/dashboard.jpg)
 
 | Escalation, live | Generated postmortem |
@@ -68,6 +73,9 @@ Monitoring tool / app ──POST /api/v1/alerts──► API key (hashed lookup)
 - **Incident page** — the centerpiece: status, severity, live "started 14 minutes ago" and response
   times, *Acknowledge / Start investigating / Mark mitigated / Resolve* driven by the state machine,
   *Escalate* to page the next level on demand, responders, paging, grouped alerts and the timeline.
+- **Responders with roles** — *Incident Commander* (exactly one, enforced by a partial unique index),
+  *Responders* and read-only *Observers*. Join, observe, switch, leave; the commander (or an admin)
+  hands over command and manages people. Every change lands on the timeline.
 - **Escalation policies** — multi-level, users or whole teams, per-level delays; acknowledging stops
   the automatic schedule, *Escalate* pages the next level immediately.
 - **Notifications** via a background worker (BullMQ) with retries/backoff; delivered to a
@@ -264,9 +272,15 @@ npm run lint
 - **Integration** (`apps/api`, `apps/worker`): run against a real Postgres test database
   (`incidents_test`, created and migrated automatically) and Redis. They cover ingestion,
   grouping, the concurrent-alert race, concurrent acknowledgements, the lifecycle and its
-  timeline/audit trail, auto-resolve, reopen conflicts, tenant isolation, roles, alert rules,
+  timeline/audit trail, auto-resolve, tenant isolation, roles, alert rules,
   SSE delivery and isolation, escalation level by level, idempotent paging, notification retries,
-  and sweeper recovery after a lost queue. The API-key suite checks that the plaintext key appears
+  and sweeper recovery after a lost queue. Phases 5–10 added suites for **correlation** (four alerts →
+  one incident, severity raising, recurrence), the **state machine** (every forbidden move is a 409,
+  and the API's table and the database trigger agree on all 25 pairs), **on-demand escalation**, the
+  **immutable timeline** (UPDATE/DELETE refused by Postgres, concurrent appends keep the chain
+  intact, edited or deleted rows are pinpointed), **realtime** (two browsers, ordered event ids,
+  replay after a disconnect, resync) and **responder roles** (one commander even under racing
+  hand-overs, read-only observers, permissions). The API-key suite checks that the plaintext key appears
   nowhere in the database, rotation grace periods and expiry, immediate revocation, throttled
   last-used timestamps, per-key token buckets with headers, and the bad-key IP lock-out.
 

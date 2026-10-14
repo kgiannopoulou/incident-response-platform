@@ -20,6 +20,16 @@ export type IncidentStatus = (typeof INCIDENT_STATUSES)[number];
 export const SERVICE_STATUSES = ["operational", "degraded", "outage", "maintenance"] as const;
 export type ServiceStatus = (typeof SERVICE_STATUSES)[number];
 
+// Roles a person can have on one incident (organization roles are ROLES).
+export const RESPONDER_ROLES = ["commander", "responder", "observer"] as const;
+export type ResponderRole = (typeof RESPONDER_ROLES)[number];
+
+export const RESPONDER_ROLE_LABEL: Record<ResponderRole, string> = {
+  commander: "Incident Commander",
+  responder: "Responder",
+  observer: "Observer",
+};
+
 export const ROLES = ["admin", "responder"] as const;
 export type Role = (typeof ROLES)[number];
 
@@ -72,6 +82,8 @@ export const TIMELINE_EVENT_TYPES = [
   "SEVERITY_CHANGED",
   "RESPONDER_ADDED",
   "COMMANDER_ASSIGNED",
+  "RESPONDER_ROLE_CHANGED",
+  "RESPONDER_REMOVED",
   "NOTE_ADDED",
   "INCIDENT_RESOLVED",
   "POSTMORTEM_GENERATED",

@@ -1,4 +1,4 @@
-import type { AlertSeverity, AlertStatus, IncidentSeverity, IncidentStatus, ServiceStatus } from "@irp/shared";
+import type { AlertSeverity, AlertStatus, IncidentSeverity, IncidentStatus, ResponderRole, ServiceStatus } from "@irp/shared";
 
 export type User = {
   id: number;
@@ -60,7 +60,7 @@ export type IncidentDetail = {
   }[];
   timeline: TimelineEvent[];
   timeline_integrity: TimelineIntegrity;
-  responders: { id: number; name: string; email: string; role: string }[];
+  responders: { id: number; name: string; email: string; role: ResponderRole; joined_at: string }[];
   notifications: {
     id: number;
     kind: string;

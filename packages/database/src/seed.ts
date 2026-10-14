@@ -177,8 +177,9 @@ async function main() {
     await db.query(`UPDATE organizations SET incident_counter = 1 WHERE id = $1`, [org.id]);
     await db.query(`INSERT INTO incident_alerts (incident_id, alert_id) VALUES ($1, $2)`, [past.id, pastAlert.id]);
     await db.query(
-      `INSERT INTO incident_responders (incident_id, user_id, role) VALUES ($1, $2, 'commander')`,
-      [past.id, users.jordan]
+      `INSERT INTO incident_responders (incident_id, user_id, role)
+       VALUES ($1, $2, 'commander'), ($1, $3, 'responder'), ($1, $4, 'observer')`,
+      [past.id, users.jordan, users.sam, users.alex]
     );
     const events: [string, number | null, string, number][] = [
       ["INCIDENT_CREATED", null, "Incident opened by alert from prometheus:auth-latency", 0],

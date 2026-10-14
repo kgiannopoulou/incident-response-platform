@@ -211,6 +211,35 @@ split into `components/incident/*`:
   underneath; **responders**, **paging** (who was paged at which level, delivery state), **alerts**
   (every grouped alert with its metadata) and the **postmortem** link alongside.
 
+## Responders and roles
+
+```
+INC-142
+Incident Commander   Konstantina
+Responders           Maria, George
+Observers            Alex
+```
+
+`incident_responders (incident_id, user_id, role, joined_at)`, roles `commander`, `responder`,
+`observer` (`apps/api/src/domain/responders.ts`):
+
+- **Exactly one commander.** A partial unique index (`… (incident_id) WHERE role = 'commander'`)
+  makes two commanders impossible, even if two hand-overs race; handing over demotes the previous
+  commander to responder in the same transaction and updates `incidents.commander_id`. The
+  commander can't step down or leave without handing over, so an open incident never loses its owner.
+  Whoever first acknowledges (or declares) an incident becomes commander if there is none.
+- **Who may do what.** Anyone in the organization can join themselves as responder or observer,
+  switch between the two, leave, or take command of an incident that has no commander. Changing
+  someone else's role, removing them, or taking command from the current commander requires being the
+  commander or an org admin.
+- **Observers are read-only.** They follow along (support, management) but get `403` on status,
+  severity, escalation and notes until they join as responder; the UI disables those controls and
+  says why. Acting on an incident you're not on still adds you as a responder automatically.
+- **Everything is on the timeline** — `RESPONDER_ADDED`, `RESPONDER_ROLE_CHANGED`,
+  `COMMANDER_ASSIGNED`, `RESPONDER_REMOVED`, with `{ userId, from, to }` — and in the audit log.
+  Postmortems count responders, not observers.
+- Responders are frozen once the incident is resolved.
+
 ## Immutable timeline
 
 Every important action becomes a row in `timeline_events (id, incident_id, actor_id, event_type,
@@ -223,7 +252,7 @@ message, metadata JSONB, created_at, prev_hash, hash)`:
 | `NOTIFICATION_SENT` / `INCIDENT_ESCALATED` | level 1 is paged / a later level is paged (worker or *Escalate*) | `{ level, userIds, manual? }` |
 | `INCIDENT_ACKNOWLEDGED`, `STATUS_CHANGED`, `INCIDENT_RESOLVED` | any status change | `{ from, to }` |
 | `SEVERITY_CHANGED` | by a person, or raised by a worse grouped alert | `{ from, to, reason? }` |
-| `RESPONDER_ADDED`, `COMMANDER_ASSIGNED` | people join or change role | `{ userId, … }` |
+| `RESPONDER_ADDED`, `RESPONDER_ROLE_CHANGED`, `COMMANDER_ASSIGNED`, `RESPONDER_REMOVED` | people join, change role, take command, leave | `{ userId, from, to }` |
 | `NOTE_ADDED`, `POSTMORTEM_GENERATED` | notes; postmortem drafted or refreshed | |
 
 It is an **audit log, so it is append-only**, enforced at three levels:

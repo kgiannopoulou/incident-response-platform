@@ -294,40 +294,6 @@ export async function changeSeverity(
   return rows[0];
 }
 
-export async function addResponder(
-  db: PoolClient,
-  fx: Effects,
-  incident: IncidentRow,
-  user: { id: number; name: string },
-  role: "commander" | "responder",
-  actor: Actor
-) {
-  await addResponderRow(db, incident.id, user.id, role);
-  if (role === "commander") {
-    await db.query(
-      `UPDATE incident_responders SET role = 'responder' WHERE incident_id = $1 AND user_id <> $2 AND role = 'commander'`,
-      [incident.id, user.id]
-    );
-    await db.query(`UPDATE incidents SET commander_id = $2 WHERE id = $1`, [incident.id, user.id]);
-    await addTimeline(db, fx, incident, "COMMANDER_ASSIGNED", `${user.name} is now incident commander`, actor, {
-      userId: user.id,
-    });
-  } else {
-    await addTimeline(db, fx, incident, "RESPONDER_ADDED", `${user.name} joined as responder`, actor, {
-      userId: user.id,
-    });
-  }
-  await audit(db, {
-    organizationId: incident.organization_id,
-    actorUserId: actor?.id ?? null,
-    action: "incident.responder",
-    entityType: "incident",
-    entityId: incident.id,
-    details: { userId: user.id, role },
-  });
-  changed(fx, incident);
-}
-
 // "Escalate" button: pages the next level of the service's escalation policy
 // right now, without waiting for its delay — also after acknowledgement,
 // when the responder on it needs more hands. Pages are rows delivered by the

@@ -69,7 +69,7 @@ export function buildPostmortemDraft(input: PostmortemInput): PostmortemDraft {
     alertCount: alerts.length,
     escalations: timeline.filter((e) => e.type === "INCIDENT_ESCALATED").length,
     notesCount: timeline.filter((e) => e.type === "NOTE_ADDED").length,
-    responderCount: responders.length,
+    responderCount: responders.filter((r) => r.role !== "observer").length, // observers watched, didn't respond
   };
 
   const service = incident.serviceName ?? "an unassigned service";

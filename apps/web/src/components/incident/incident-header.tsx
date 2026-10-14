@@ -44,11 +44,13 @@ const seconds = (from: string, to: string | null) => (to ? Math.round((+new Date
 type Props = {
   incident: IncidentDetail["incident"];
   busy: boolean;
+  readOnly: boolean; // observers watch; they can't change the incident
   error: string | null;
   act: (path: string, body?: unknown) => Promise<boolean>;
 };
 
-export function IncidentHeader({ incident, busy, error, act }: Props) {
+export function IncidentHeader({ incident, busy: working, readOnly, error, act }: Props) {
+  const busy = working || readOnly;
   const now = useNow();
   const [resolving, setResolving] = useState(false);
   const [resolution, setResolution] = useState("");
@@ -156,6 +158,9 @@ export function IncidentHeader({ incident, busy, error, act }: Props) {
             </Button>
           )}
           {!open && <span className="text-sm text-zinc-500">Resolved incidents are final; a recurrence opens a new incident.</span>}
+          {open && readOnly && (
+            <span className="text-sm text-zinc-500">You&apos;re observing — join as a responder to act.</span>
+          )}
           {incident.next_escalation_at && (
             <span className="text-xs text-amber-300">
               Auto-escalates to L{incident.escalation_level + 1} {timeUntil(incident.next_escalation_at, now)} unless acknowledged

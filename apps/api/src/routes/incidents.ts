@@ -1,6 +1,7 @@
 import { Router, type Request } from "express";
 import {
   addResponderSchema,
+  updateResponderSchema,
   createIncidentSchema,
   INCIDENT_SEVERITIES,
   INCIDENT_TRANSITIONS,
@@ -11,7 +12,6 @@ import {
 } from "@irp/shared";
 import type { Deps } from "../deps";
 import {
-  addResponder,
   addTimeline,
   changeSeverity,
   changeStatus,
@@ -21,12 +21,26 @@ import {
   lockIncident,
   type Actor,
 } from "../domain/incidents";
+import { assertCanAct, removeResponder, setResponderRole, type RoleActor } from "../domain/responders";
+import type { PoolClient } from "@irp/database";
 import { audit } from "../lib/audit";
 import { runTx } from "../lib/effects";
 import { HttpError, notFound, parseId } from "../lib/http";
 
 const actorOf = (req: Request): Actor => ({ id: req.user!.id, name: req.user!.name });
 const numberParam = (req: Request) => parseId(req.params.number, "Incident");
+const roleActorOf = (req: Request): RoleActor => ({ id: req.user!.id, name: req.user!.name, isAdmin: req.user!.role === "admin" });
+
+// Only members of the incident's organization can be put on it.
+async function orgMember(db: PoolClient, organizationId: number, userId: number) {
+  const { rows } = await db.query<{ id: number; name: string }>(
+    `SELECT u.id, u.name FROM users u JOIN organization_members m ON m.user_id = u.id
+     WHERE u.id = $1 AND m.organization_id = $2`,
+    [userId, organizationId]
+  );
+  if (!rows[0]) throw notFound("User");
+  return rows[0];
+}
 
 // Routes are keyed by the per-organization incident number (INC-42 -> 42),
 // the identifier people actually say out loud during an incident.
@@ -114,8 +128,9 @@ export function incidentsRouter(deps: Deps) {
         [incident.id]
       ),
       deps.pool.query(
-        `SELECT u.id, u.name, u.email, r.role, r.added_at FROM incident_responders r
-         JOIN users u ON u.id = r.user_id WHERE r.incident_id = $1 ORDER BY r.role, r.added_at`,
+        `SELECT u.id, u.name, u.email, r.role, r.joined_at FROM incident_responders r
+         JOIN users u ON u.id = r.user_id WHERE r.incident_id = $1
+         ORDER BY array_position(ARRAY['commander', 'responder', 'observer'], r.role), r.joined_at`,
         [incident.id]
       ),
       deps.pool.query(
@@ -168,6 +183,7 @@ export function incidentsRouter(deps: Deps) {
     const { status, message } = updateStatusSchema.parse(req.body);
     const incident = await runTx(deps, async (db, fx) => {
       const locked = await lockIncident(db, req.user!.organizationId, numberParam(req));
+      await assertCanAct(db, locked, req.user!);
       return changeStatus(db, fx, locked, status, actorOf(req), message);
     });
     res.json({ incident });
@@ -177,6 +193,7 @@ export function incidentsRouter(deps: Deps) {
   router.post("/:number/acknowledge", async (req, res) => {
     const incident = await runTx(deps, async (db, fx) => {
       const locked = await lockIncident(db, req.user!.organizationId, numberParam(req));
+      await assertCanAct(db, locked, req.user!);
       return changeStatus(db, fx, locked, "acknowledged", actorOf(req));
     });
     res.json({ incident });
@@ -186,6 +203,7 @@ export function incidentsRouter(deps: Deps) {
   router.post("/:number/escalate", async (req, res) => {
     const incident = await runTx(deps, async (db, fx) => {
       const locked = await lockIncident(db, req.user!.organizationId, numberParam(req));
+      await assertCanAct(db, locked, req.user!);
       return escalateNow(db, fx, locked, actorOf(req));
     });
     res.json({ incident });
@@ -195,6 +213,7 @@ export function incidentsRouter(deps: Deps) {
     const { severity } = updateSeveritySchema.parse(req.body);
     const incident = await runTx(deps, async (db, fx) => {
       const locked = await lockIncident(db, req.user!.organizationId, numberParam(req));
+      await assertCanAct(db, locked, req.user!);
       return changeSeverity(db, fx, locked, severity, actorOf(req));
     });
     res.json({ incident });
@@ -204,6 +223,7 @@ export function incidentsRouter(deps: Deps) {
     const { message } = noteSchema.parse(req.body);
     await runTx(deps, async (db, fx) => {
       const locked = await lockIncident(db, req.user!.organizationId, numberParam(req));
+      await assertCanAct(db, locked, req.user!);
       await addTimeline(db, fx, locked, "NOTE_ADDED", message, actorOf(req));
       await audit(db, {
         organizationId: locked.organization_id,
@@ -216,20 +236,38 @@ export function incidentsRouter(deps: Deps) {
     res.status(201).json({ ok: true });
   });
 
+  // --- Responders ---------------------------------------------------------
+
+  // Join (no userId) or add someone, as commander / responder / observer.
   router.post("/:number/responders", async (req, res) => {
     const { userId, role } = addResponderSchema.parse(req.body);
+    const changed = await runTx(deps, async (db, fx) => {
+      const locked = await lockIncident(db, req.user!.organizationId, numberParam(req));
+      const target = await orgMember(db, locked.organization_id, userId ?? req.user!.id);
+      return setResponderRole(db, fx, locked, target, role, roleActorOf(req));
+    });
+    res.status(changed ? 201 : 200).json({ ok: true, changed });
+  });
+
+  // Change a role: switch to observer, hand over command, …
+  router.patch("/:number/responders/:userId", async (req, res) => {
+    const { role } = updateResponderSchema.parse(req.body);
+    const changed = await runTx(deps, async (db, fx) => {
+      const locked = await lockIncident(db, req.user!.organizationId, numberParam(req));
+      const target = await orgMember(db, locked.organization_id, parseId(req.params.userId, "User"));
+      return setResponderRole(db, fx, locked, target, role, roleActorOf(req));
+    });
+    res.json({ ok: true, changed });
+  });
+
+  // Leave (yourself) or remove someone.
+  router.delete("/:number/responders/:userId", async (req, res) => {
     await runTx(deps, async (db, fx) => {
       const locked = await lockIncident(db, req.user!.organizationId, numberParam(req));
-      // Only members of the same organization can be added.
-      const { rows } = await db.query(
-        `SELECT u.id, u.name FROM users u JOIN organization_members m ON m.user_id = u.id
-         WHERE u.id = $1 AND m.organization_id = $2`,
-        [userId, locked.organization_id]
-      );
-      if (!rows[0]) throw notFound("User");
-      await addResponder(db, fx, locked, rows[0], role, actorOf(req));
+      const target = await orgMember(db, locked.organization_id, parseId(req.params.userId, "User"));
+      await removeResponder(db, fx, locked, target, roleActorOf(req));
     });
-    res.status(201).json({ ok: true });
+    res.status(204).end();
   });
 
   // --- Postmortem --------------------------------------------------------

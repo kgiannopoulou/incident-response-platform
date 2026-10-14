@@ -42,7 +42,7 @@ function iconFor(e: TimelineEvent) {
   return ICON[e.event_type] ?? "•";
 }
 
-const hhmm = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const hhmm = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 
 type Props = {
   timeline: TimelineEvent[];

@@ -36,11 +36,12 @@ export default function IncidentPage() {
   const [busy, setBusy] = useState(false);
   const live = useLiveChange(number, me?.name ?? null);
 
-  async function act(path: string, body?: unknown) {
+  // Runs one mutation with shared busy/error handling, then re-fetches.
+  async function run(fn: () => Promise<unknown>) {
     setBusy(true);
     setActionError(null);
     try {
-      await post(`/incidents/${number}${path}`, body);
+      await fn();
       detail.reload();
       return true;
     } catch (err) {
@@ -50,6 +51,7 @@ export default function IncidentPage() {
       setBusy(false);
     }
   }
+  const act = (path: string, body?: unknown) => run(() => post(`/incidents/${number}${path}`, body));
 
   if (detail.error) return <ErrorState message={detail.error} onRetry={detail.reload} />;
   if (!detail.data) return <Loading />;
@@ -58,6 +60,7 @@ export default function IncidentPage() {
   // (the re-fetch can only be as new or newer).
   const incident = live.patch && live.patch.since > detail.loadedAt ? { ...fetched, ...live.patch.fields } : fetched;
   const open = incident.status !== "resolved";
+  const observing = responders.find((r) => r.id === me?.id)?.role === "observer";
 
   return (
     <div className="space-y-5">
@@ -74,18 +77,30 @@ export default function IncidentPage() {
         </div>
       )}
 
-      <IncidentHeader incident={incident} busy={busy} error={actionError} act={act} />
+      <IncidentHeader incident={incident} busy={busy} readOnly={observing} error={actionError} act={act} />
 
       <div className="grid gap-5 lg:grid-cols-3">
         <div className="lg:col-span-2">
           <IncidentTimeline
             timeline={timeline}
             integrity={timeline_integrity}
-            canPost busy={busy} onNote={(message) => act("/notes", { message })} />
+            canPost={!observing}
+            busy={busy}
+            onNote={(message) => act("/notes", { message })}
+          />
         </div>
 
         <div className="space-y-5">
-          <RespondersCard responders={responders} users={users.data?.users ?? null} me={me} open={open} busy={busy} act={act} />
+          <RespondersCard
+            number={number}
+            responders={responders}
+            users={users.data?.users ?? null}
+            me={me}
+            open={open}
+            busy={busy}
+            act={act}
+            run={run}
+          />
 
           <Card title={`Paging${incident.escalation_policy_name ? ` · ${incident.escalation_policy_name}` : ""}`}>
             {notifications.length === 0 ? (
