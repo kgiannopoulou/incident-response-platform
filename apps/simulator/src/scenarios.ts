@@ -9,15 +9,15 @@
 //
 // Options via env: IRP_API_URL (default http://localhost:4000),
 // IRP_API_KEY (default: the seeded checkout-api key).
-import { AlertApiError, AlertClient, type TriggerInput } from "@irp/alert-sdk";
+import { IncidentApiError, IncidentClient, type AlertInput } from "@incident-platform/sdk";
 
 const baseUrl = process.env.IRP_API_URL ?? "http://localhost:4000";
 const apiKey = process.env.IRP_API_KEY ?? "ir_live_dev_checkout_api";
-const client = new AlertClient({ baseUrl, apiKey });
+const client = new IncidentClient({ baseUrl, apiKey });
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const outage: TriggerInput[] = [
+const outage: AlertInput[] = [
   {
     service: "checkout-api",
     severity: "CRITICAL",
@@ -53,21 +53,21 @@ async function main() {
 
   if (scenario === "outage") {
     for (const alert of outage) {
-      log(`${alert.severity} ${alert.title.slice(0, 26)}`, await client.trigger(alert));
+      log(`${alert.severity} ${alert.title.slice(0, 26)}`, await client.alert(alert));
       await sleep(1000);
     }
   } else if (scenario === "recover") {
     log("resolve checkout-errors", await client.resolve({ deduplicationKey: "checkout-errors" }));
     log("resolve payments-timeouts", await client.resolve({ deduplicationKey: "checkout-payments-timeouts" }));
   } else if (scenario === "noise") {
-    log("INFO (recorded)", await client.trigger({ severity: "INFO", title: "Deploy 2026.10.14-1 finished", source: "argo" }));
-    log("WARNING (recorded)", await client.trigger({ severity: "WARNING", title: "CPU > 80%", source: "node-exporter" }));
-    log("staging (suppressed by rule)", await client.trigger({ severity: "CRITICAL", title: "Smoke test failed", source: "staging-probe" }));
-    log("latency WARNING (rule -> SEV3)", await client.trigger({ severity: "WARNING", title: "Checkout p99 latency 1800ms", source: "prometheus" }));
+    log("INFO (recorded)", await client.alert({ severity: "INFO", title: "Deploy 2026.10.14-1 finished", source: "argo" }));
+    log("WARNING (recorded)", await client.alert({ severity: "WARNING", title: "CPU > 80%", source: "node-exporter" }));
+    log("staging (suppressed by rule)", await client.alert({ severity: "CRITICAL", title: "Smoke test failed", source: "staging-probe" }));
+    log("latency WARNING (rule -> SEV3)", await client.alert({ severity: "WARNING", title: "Checkout p99 latency 1800ms", source: "prometheus" }));
   } else if (scenario === "storm") {
     // Correlation: the same problem reported again and again is one incident.
     for (const errorRate of [12, 19, 27, 38]) {
-      const result = await client.trigger({
+      const result = await client.alert({
         service: "checkout-api",
         severity: "CRITICAL",
         title: "Checkout API elevated error rate",
@@ -81,7 +81,7 @@ async function main() {
     }
     // Severity follows the worst alert: HIGH opens a SEV2, CRITICAL raises it.
     for (const severity of ["HIGH", "CRITICAL"] as const) {
-      const result = await client.trigger({
+      const result = await client.alert({
         service: "checkout-api",
         severity,
         title: "Checkout database connections exhausted",
@@ -93,14 +93,14 @@ async function main() {
     }
   } else if (scenario === "burst") {
     // No retries, so the 429s are visible instead of being waited out.
-    const raw = new AlertClient({ baseUrl, apiKey, maxRetries: 0 });
+    const raw = new IncidentClient({ baseUrl, apiKey, maxRetries: 0 });
     const counts: Record<string, number> = {};
     for (let i = 0; i < 150; i++) {
       try {
-        await raw.trigger({ severity: "INFO", title: `Heartbeat ${i}`, source: "burst", deduplicationKey: "burst" });
+        await raw.alert({ severity: "INFO", title: `Heartbeat ${i}`, source: "burst", deduplicationKey: "burst" });
         counts.accepted = (counts.accepted ?? 0) + 1;
       } catch (err) {
-        const key = err instanceof AlertApiError ? String(err.status) : "error";
+        const key = err instanceof IncidentApiError ? String(err.status) : "error";
         counts[key] = (counts[key] ?? 0) + 1;
       }
     }

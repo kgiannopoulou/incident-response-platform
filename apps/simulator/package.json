@@ -5,13 +5,13 @@
   "type": "module",
   "description": "Plays production incidents against a running platform, so no real infrastructure is needed to try it.",
   "scripts": {
-    "simulate": "tsx src/scenarios.ts",
-    "demo:incident": "tsx src/demo-incident.ts",
+    "simulate": "tsx --conditions=@incident-platform/source src/scenarios.ts",
+    "demo:incident": "tsx --conditions=@incident-platform/source src/demo-incident.ts",
     "typecheck": "tsc -p .",
     "test": "vitest run"
   },
   "dependencies": {
-    "@irp/alert-sdk": "*",
+    "@incident-platform/sdk": "*",
     "@irp/shared": "*"
   },
   "devDependencies": {

@@ -9,6 +9,9 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    "customConditions": [
+      "@incident-platform/source"
+    ]
   }
 }

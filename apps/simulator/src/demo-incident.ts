@@ -17,7 +17,7 @@
 // Env: IRP_API_URL (default http://localhost:4000); IRP_KEYS as JSON
 // {"checkout-api":"ir_live_…"} (default: the seeded dev keys); IRP_RESPONDER
 // / IRP_PASSWORD for --respond (default sam@acme.test / password123).
-import { AlertApiError, AlertClient, type AlertResult } from "@irp/alert-sdk";
+import { IncidentApiError, IncidentClient, type AlertResult } from "@incident-platform/sdk";
 import { incidentRef, PRODUCTION_INCIDENT, simulatedAlert } from "@irp/shared";
 import { formatClock, parseArgs, planResponse, type ResponseStep } from "./demo-plan";
 
@@ -25,9 +25,9 @@ const args = parseArgs(process.argv.slice(2));
 const baseUrl = process.env.IRP_API_URL ?? "http://localhost:4000";
 const keys: Record<string, string> = process.env.IRP_KEYS ? JSON.parse(process.env.IRP_KEYS) : {};
 const keyFor = (service: string) => keys[service] ?? `ir_live_dev_${service.replace(/-/g, "_")}`;
-const clients = new Map<string, AlertClient>();
+const clients = new Map<string, IncidentClient>();
 const client = (service: string) => {
-  if (!clients.has(service)) clients.set(service, new AlertClient({ baseUrl, apiKey: keyFor(service) }));
+  if (!clients.has(service)) clients.set(service, new IncidentClient({ baseUrl, apiKey: keyFor(service) }));
   return clients.get(service)!;
 };
 
@@ -64,11 +64,11 @@ async function playAlerts() {
     const alert = simulatedAlert(step, runId);
     const sev = String(alert.severity).toUpperCase();
     try {
-      const result = await client(alert.service).trigger({ ...alert, severity: alert.severity as "CRITICAL" });
+      const result = await client(alert.service).alert({ ...alert, severity: alert.severity as "CRITICAL" });
       if (result.incident && step.alert.deduplicationKey) opened.set(step.alert.deduplicationKey, result.incident.number);
       log(step.at, `${SEVERITY_COLOR[sev] ?? ""}${sev.padEnd(8)}${color.reset}`, alert.service.padEnd(17), alert.title.slice(0, 40).padEnd(40), outcome(result));
     } catch (err) {
-      const reason = err instanceof AlertApiError ? `${err.status} ${err.message}` : (err as Error).message;
+      const reason = err instanceof IncidentApiError ? `${err.status} ${err.message}` : (err as Error).message;
       log(step.at, `${sev.padEnd(8)}`, alert.service.padEnd(17), alert.title.slice(0, 40).padEnd(40), `${color.red}failed: ${reason}${color.reset}`);
     }
   }

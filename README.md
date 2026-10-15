@@ -65,8 +65,13 @@ Monitoring tool / app ──POST /api/v1/alerts──► API key (hashed lookup)
 
 - **Alert ingestion API** — `POST /api/v1/alerts` with `INFO` / `WARNING` / `HIGH` / `CRITICAL`
   severities, title, description, deduplication key and free-form metadata; returns a time-sortable
-  public id (`alert_01J…`, a ULID), status and receive time. PagerDuty-style `resolve` events, and a
-  tiny [SDK](packages/alert-sdk) that retries and honours `Retry-After`.
+  public id (`alert_01J…`, a ULID), status and receive time. PagerDuty-style `resolve` events.
+- **Alert SDK — [`@incident-platform/sdk`](packages/alert-sdk)**: `new IncidentClient({ apiKey })`
+  then `alert()`, `resolve()`, `captureException()` (stack + a fingerprint that groups the same bug
+  into one incident across order ids and redeploys) and `monitor("nightly-billing", job)` (alerts on
+  failure, clears on recovery). Timeouts, retries with backoff, `Retry-After`, typed errors, and an
+  `onError: "log"` mode so alerting can't crash the app. Zero runtime dependencies, compiled to ESM +
+  `.d.ts`, packed and smoke-imported in CI; an instrumented example service ships with it.
 - **API keys per service** (`ir_live_…`): generated once and **stored only as a SHA-256 hash**;
   several keys per service; **rotation** with a grace period in which old and new key both work;
   instant **revocation**; **last-used** timestamps; per-key **rate limits** (Redis token bucket, with
@@ -171,7 +176,7 @@ Monitoring tool / app ──POST /api/v1/alerts──► API key (hashed lookup)
 | [`packages/database`](packages/database) | Plain-SQL migrations, migration runner, seed data, pool + transaction helper, test fixtures |
 | [`packages/shared`](packages/shared) | Domain types, zod schemas, state machine, rule engine, dedup, postmortem generator (pure, unit-tested) |
 | [`apps/simulator`](apps/simulator) | `npm run demo:incident` and the smaller `npm run simulate` scenarios, sent over HTTP with the SDK |
-| [`packages/alert-sdk`](packages/alert-sdk) | Client for sending alerts (with retry/backoff) |
+| [`packages/alert-sdk`](packages/alert-sdk) | `@incident-platform/sdk`: the publishable client for applications (alerts, resolves, exceptions, job monitoring) + an example service |
 | [`docker`](docker) | Dockerfile (one build target per app) |
 | [`docs`](docs) | [Architecture & design decisions](docs/architecture.md), [API reference](docs/api.md) |
 
@@ -288,6 +293,29 @@ acknowledgement timeout fires and pages Alex early (step 2 would otherwise wait 
 and at minute ten Riley is paged. Then then acknowledge, add notes, resolve, and open the
 generated postmortem.
 
+From an application, with the SDK:
+
+```ts
+import { IncidentClient } from "@incident-platform/sdk";
+
+const incidents = new IncidentClient({
+  apiKey: process.env.INCIDENT_API_KEY!,
+});
+
+await incidents.alert({
+  severity: "critical",
+  title: "Database connection failure",
+  deduplicationKey: "db-connection",
+});
+```
+
+```
+Application ──SDK──► Alert API ──► Incident engine
+```
+
+See the [SDK README](packages/alert-sdk/README.md); `npm run example -w @incident-platform/sdk` runs
+a small checkout service that reports its failures through it.
+
 Sending an alert from anything that speaks HTTP (the seeded `checkout-api` service's dev key):
 
 ```sh
@@ -394,6 +422,13 @@ npm run lint
   incidents counted for MTTA but not MTTR, the previous-window comparison, all four severities and
   every service present with zeros, one bucket per UTC day, active incidents ordered worst-first then
   oldest, tenant isolation and the allowed windows.
+- **Phase 19 (SDK)**: the plan's `alert({ severity, title, deduplicationKey })` call on the wire,
+  env-var defaults, client-side validation, retries for 5xx / network errors / timeouts with an
+  identical body, `Retry-After`, no retries for 4xx, `onError` modes, exception fingerprints (ids and
+  line numbers ignored, different error types kept apart), `monitor()` alert-then-resolve, and
+  **end to end against the real API over HTTP**: repeats grouped into one incident, the same exception
+  thrown three times is one incident with three alerts, `resolve` auto-resolves, bad keys and foreign
+  services surface as typed errors.
 - **Phase 18 (simulator)**: the dashboard button plays the scenario through the real ingestion
   pipeline (decisions, grouping, the SEV2 → SEV1 raise, paging job, `metadata.simulated` on every
   alert, audit entry), one run per organization, admin-only, valid speeds; the CLI's argument

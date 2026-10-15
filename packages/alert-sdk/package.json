@@ -1,18 +1,37 @@
 {
-  "name": "@irp/alert-sdk",
-  "version": "0.1.0",
-  "private": true,
+  "name": "@incident-platform/sdk",
+  "version": "0.2.0",
+  "description": "Send alerts to the incident platform from any Node.js (18+) application: alerts, resolves, exceptions and job monitoring, with retries.",
+  "license": "MIT",
   "type": "module",
-  "description": "Tiny client for sending alerts to the Incident Response Platform.",
+  "sideEffects": false,
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "@incident-platform/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
   },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "incident",
+    "alerting",
+    "on-call",
+    "monitoring"
+  ],
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
     "typecheck": "tsc -p .",
-    "test": "vitest run"
-  },
-  "dependencies": {
-    "@irp/shared": "*"
+    "test": "vitest run",
+    "example": "tsx --conditions=@incident-platform/source examples/checkout-service.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

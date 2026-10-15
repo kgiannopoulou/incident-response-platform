@@ -567,6 +567,34 @@ definition changes.
 - The demo seed generates 60 days of believable history (deterministic PRNG) so a fresh install's
   dashboard shows trends; the previous 30 days are deliberately slower so the deltas tell a story.
 
+## The alert SDK
+
+`@incident-platform/sdk` (`packages/alert-sdk`) is what an application embeds:
+
+```
+Application ── IncidentClient.alert / resolve / captureException / monitor
+    │            timeout per attempt · backoff on 5xx, network errors, timeouts · Retry-After on 429
+    ▼
+Alert API  ── key → service, rate limit, validation
+    ▼
+Incident engine ── dedup, rules, incident, paging
+```
+
+- **Retrying is safe because the server is idempotent per deduplication key** — a retried alert joins
+  the same incident. 4xx other than 429 (revoked key, invalid payload, a service the key doesn't own)
+  are never retried.
+- **Exceptions group by fingerprint**: error type + message with numbers, ids and quoted values masked
+  + the throwing function and file (not the line, so a redeploy that shifts code doesn't open new
+  incidents). `monitor(name, job)` uses a fixed `monitor:<name>` key, alerts on failure and resolves
+  on the next success.
+- **Alerting must not take the app down**: `onError: "log"` (or a handler) turns delivery failures into
+  a log line and a `null` result; the client's generic type follows the mode, so the default
+  `"throw"` mode keeps a non-null result type. Invalid calls (no key, bad severity) always throw.
+- **Publishable**: no runtime dependencies (types are its own, not `@irp/shared`), compiled to ESM +
+  declarations; CI builds it, runs `npm pack --dry-run` and imports the compiled package. Inside the
+  monorepo, a custom export condition (`@incident-platform/source`, set via `customConditions` and
+  `tsx --conditions`) resolves it to its TypeScript source, so nothing has to be built before tests.
+
 ## Simulator
 
 So a reviewer can watch the platform work without real infrastructure, one scenario

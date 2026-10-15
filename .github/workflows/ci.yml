@@ -49,6 +49,12 @@ jobs:
         run: npm test
       - name: Build web
         run: npm run build -w @irp/web
+      - name: Build and pack the SDK
+        run: |
+          npm run build -w @incident-platform/sdk
+          npm pack --dry-run -w @incident-platform/sdk
+          # The compiled package (default export condition), as an application would import it.
+          node -e "import('@incident-platform/sdk').then((m) => { new m.IncidentClient({ apiKey: 'ir_live_ci' }); console.log('sdk', m.SDK_VERSION, 'ok'); })"
 
   docker:
     runs-on: ubuntu-latest
