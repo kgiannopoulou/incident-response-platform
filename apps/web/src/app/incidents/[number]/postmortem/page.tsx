@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
-import { formatDurationLong, incidentRef, sevLabel, type ActionItem } from "@irp/shared";
+import { formatDurationLong, incidentRef, sevLabel, UNCONFIRMED_ROOT_CAUSE, type ActionItem, type AiSection } from "@irp/shared";
+import { AI_SECTION_TITLE, AiDraftPanel } from "@/components/postmortem/ai-draft-panel";
 import { Button, Card, cx, ErrorState, inputClass, Loading } from "@/components/ui";
 import { API_URL, patch, post, put } from "@/lib/api";
 import { dateTime, duration, timeAgo } from "@/lib/format";
@@ -20,6 +21,10 @@ import type { Postmortem } from "@/lib/types";
 // The timeline comes from the incident's immutable event log; responders
 // can hide entries from the document but never edit them. Publishing makes
 // the text read-only; action items can still be ticked off afterwards.
+//
+// An optional AI draft (phase 16) sits below the header as a suggestion;
+// sections a reviewer applies are badged "AI-assisted" and publishing needs
+// an explicit "I have reviewed them" confirmation.
 
 type DraftItem = Omit<ActionItem, "id"> & { id?: string };
 type Draft = {
@@ -34,6 +39,15 @@ type Draft = {
 };
 
 type TextKey = "summary" | "impact" | "root_cause" | "resolution" | "what_went_well" | "what_went_poorly";
+const AI_SECTION_OF: Record<TextKey, AiSection> = {
+  summary: "summary",
+  impact: "impact",
+  root_cause: "rootCause",
+  resolution: "resolution",
+  what_went_well: "whatWentWell",
+  what_went_poorly: "whatWentPoorly",
+};
+
 const SECTION: Record<TextKey, { title: string; hint: string; rows: number }> = {
   summary: { title: "Summary", hint: "What happened, in two or three sentences.", rows: 3 },
   impact: { title: "Impact", hint: "Who was affected and how badly — users, failed requests, revenue.", rows: 3 },
@@ -74,6 +88,7 @@ export default function PostmortemPage() {
   const pm = useApi<{ postmortem: Postmortem }>(`/incidents/${number}/postmortem`);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saving, setSaving] = useState(false);
+  const [aiReviewed, setAiReviewed] = useState(false);
   const [message, setMessage] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
 
   // Seed the editable copy whenever a new server copy arrives (first load,
@@ -132,6 +147,7 @@ export default function PostmortemPage() {
     whatWentPoorly: draft!.what_went_poorly,
     actionItems: draft!.action_items.filter((a) => a.description.trim()),
     hiddenTimelineEventIds: draft!.hidden,
+    ...(aiReviewed && p.ai_review_pending ? { aiReviewed: true as const } : {}),
     ...(status ? { status } : {}),
   });
 
@@ -143,8 +159,23 @@ export default function PostmortemPage() {
   const m = p.metrics;
   const doneCount = p.action_items.filter((a) => a.done).length;
 
+  const aiAssisted = (key: TextKey | "actionItems") =>
+    p.ai_assisted_sections.includes(key === "actionItems" ? "actionItems" : AI_SECTION_OF[key]) && (
+      <span className="ml-2 rounded bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-normal text-violet-300" title="Seeded from an AI draft">
+        AI-assisted
+      </span>
+    );
+
   const textSection = (key: TextKey) => (
-    <Card key={key} title={SECTION[key].title}>
+    <Card
+      key={key}
+      title={
+        <>
+          {SECTION[key].title}
+          {aiAssisted(key)}
+        </>
+      }
+    >
       {published ? (
         <p className="whitespace-pre-wrap text-sm text-zinc-200">{p[key] || <span className="text-zinc-500">—</span>}</p>
       ) : (
@@ -247,6 +278,29 @@ export default function PostmortemPage() {
         </div>
       </Card>
 
+      {!published && p.ai_review_pending && (
+        <div className="rounded-lg border border-violet-500/40 bg-violet-500/10 p-4 text-sm text-violet-100">
+          <p>
+            <span className="font-semibold">Review AI-assisted sections before publishing:</span>{" "}
+            {p.ai_assisted_sections.map((s) => AI_SECTION_TITLE[s]).join(", ")}. Check them against the timeline and rewrite anything the data
+            doesn&apos;t support.
+            {draft.root_cause.includes(UNCONFIRMED_ROOT_CAUSE) && " The root cause is still marked as an unconfirmed hypothesis — replace it with the confirmed cause."}
+          </p>
+          <label className="mt-2 flex items-center gap-2">
+            <input type="checkbox" checked={aiReviewed} onChange={(e) => setAiReviewed(e.target.checked)} />I have reviewed and edited the AI-assisted
+            sections
+          </label>
+        </div>
+      )}
+      {published && p.ai_assisted_sections.length > 0 && (
+        <p className="text-xs text-zinc-500">
+          Drafted with AI assistance ({p.ai_assisted_sections.map((s) => AI_SECTION_TITLE[s]).join(", ")}){p.ai_reviewed_by_name ? `; reviewed by ${p.ai_reviewed_by_name}` : ""}.
+          The timeline comes from the event log.
+        </p>
+      )}
+
+      <AiDraftPanel number={number} published={published} timeline={p.timeline} onApplied={pm.reload} />
+
       {textSection("summary")}
       {textSection("impact")}
 
@@ -293,7 +347,12 @@ export default function PostmortemPage() {
       </div>
 
       <Card
-        title={`Action items (${doneCount}/${p.action_items.length} done)`}
+        title={
+          <>
+            {`Action items (${doneCount}/${p.action_items.length} done)`}
+            {aiAssisted("actionItems")}
+          </>
+        }
         actions={
           !published && (
             <Button variant="ghost" onClick={() => setDraft({ ...draft, action_items: [...draft.action_items, { description: "", owner: "", dueDate: null, done: false }] })}>

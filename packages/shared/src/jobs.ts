@@ -13,21 +13,26 @@
 //                                          ▼  still failing
 //                                     dead-letter: the job, its error and attempts — kept for
 //                                     an operator to inspect, retry or discard
+//
+//   API ── "Generate AI draft" ──► ai-drafts: "draft-postmortem" { draftId }
+//                                          worker calls the model; 3 attempts, then dead-lettered
 
 export const QUEUES = {
   notifications: "notifications",
   escalations: "escalations",
   webhooks: "webhooks",
   deadLetter: "dead-letter",
+  aiDrafts: "ai-drafts",
 } as const;
 
 // Queues whose failed jobs are dead-lettered (everything except the DLQ itself).
-export const WORK_QUEUES = [QUEUES.notifications, QUEUES.escalations, QUEUES.webhooks] as const;
+export const WORK_QUEUES = [QUEUES.notifications, QUEUES.escalations, QUEUES.webhooks, QUEUES.aiDrafts] as const;
 export type WorkQueue = (typeof WORK_QUEUES)[number];
 
 export type DeliverNotificationJob = { notificationId: number };
 export type EscalateIncidentJob = { incidentId: number };
 export type DeliverWebhookJob = { deliveryId: number };
+export type AiDraftJob = { draftId: number };
 
 // A job that used up every retry. Stored as the payload of a job in the
 // dead-letter queue (which no worker consumes), so the original data and
@@ -46,11 +51,14 @@ export type DeadLetterJob = {
 // a page — long enough to ride out a webhook/SMTP blip, short enough that a
 // page is never minutes late. Escalation steps retry faster because they
 // only touch Postgres. Webhooks wait longer between tries (5 s → 40 s):
-// the receiver is someone else's server, which may be restarting.
+// the receiver is someone else's server, which may be restarting. AI drafts
+// try three times, 15 s then 30 s apart: the model API's own client already
+// retries short blips (429/529), so a job-level retry is for longer outages.
 export const RETRY_POLICY: Record<WorkQueue, { attempts: number; backoff: { type: "exponential"; delay: number } }> = {
   notifications: { attempts: 5, backoff: { type: "exponential", delay: 2000 } },
   escalations: { attempts: 5, backoff: { type: "exponential", delay: 1000 } },
   webhooks: { attempts: 5, backoff: { type: "exponential", delay: 5000 } },
+  "ai-drafts": { attempts: 3, backoff: { type: "exponential", delay: 15_000 } },
 };
 
 // Backoff before retry number `attempt` (1-based), as BullMQ computes it.
@@ -87,6 +95,12 @@ export function webhookJobOptions(deliveryId: number) {
     removeOnComplete: true,
     removeOnFail: true,
   };
+}
+
+export const aiDraftJobId = (draftId: number) => `ai-draft-${draftId}`;
+
+export function aiDraftJobOptions(draftId: number) {
+  return { jobId: aiDraftJobId(draftId), ...RETRY_POLICY["ai-drafts"], removeOnComplete: true, removeOnFail: true };
 }
 
 // One pending acknowledgement-timeout job per incident. The fixed id lets

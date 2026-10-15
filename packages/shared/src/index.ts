@@ -5,6 +5,7 @@ export * from "./lifecycle";
 export * from "./schemas";
 export * from "./rules";
 export * from "./postmortem";
+export * from "./ai-postmortem";
 export * from "./events";
 export * from "./jobs";
 export * from "./ids";

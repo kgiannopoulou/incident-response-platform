@@ -125,6 +125,17 @@ Monitoring tool / app ──POST /api/v1/alerts──► API key (hashed lookup)
   (pre-filled from facts such as ack timeouts and time to mitigate) and **action items** with owner,
   due date and checkbox. Publishing freezes the text (reopen as draft to change it) while action items
   stay tickable; export as Markdown; a Postmortems list shows follow-up progress.
+- **AI-assisted postmortem drafts — used carefully.** *Generate draft* feeds the model (Claude,
+  `claude-opus-5-5`) the incident metadata, alerts, responder notes, timeline and resolution —
+  redacted, size-capped, every event tagged with its id — and gets back a schema-validated
+  suggestion: incident summary, customer impact, probable root cause (with a confidence), response
+  summary, what went well, what could improve, suggested action items and open questions. Every
+  statement cites the timeline events behind it; citations of events that don't exist are stripped and
+  flagged. The reviewer ticks the sections to use; applied text is badged *AI-assisted*, the root cause
+  arrives as an `[Unconfirmed AI hypothesis …]`, and publishing needs an explicit "I have reviewed
+  them". Runs as a worker job with retries and the dead-letter queue; without an API key a
+  deterministic offline drafter (labelled as such, not as AI) keeps the workflow usable.
+  **AI-generated postmortems are treated as drafts; source timeline data remains authoritative.**
 - **Service health** derived from open incidents (SEV1 → outage, SEV2 → degraded), plus maintenance
   windows that record alerts without paging.
 - **Multi-tenant** (organizations), with `admin` / `responder` roles.
@@ -195,6 +206,10 @@ Details and trade-offs in [docs/architecture.md](docs/architecture.md).
    HTTP, cookie auth, built-in reconnects) is the simpler transport. Each event is appended to a capped
    Redis Stream and published in one atomic Lua script; its stream id is the SSE event id, so a browser
    that reconnects with `Last-Event-ID` gets exactly what it missed.
+10. **AI drafts, never AI edits.** The model's answer is a separate, schema-validated row whose
+    citations are checked against the incident's event log; a person applies sections, the timeline and
+    metrics are never AI-written, and publishing requires a confirmed review. Inputs are redacted and
+    fingerprinted (`input_digest`), and the call runs in the worker like any other slow side effect.
 
 ## Quick start
 
@@ -212,6 +227,10 @@ npm run dev:api                 # http://localhost:4000
 npm run dev:worker
 npm run dev:web                 # http://localhost:3000
 ```
+
+AI postmortem drafts use Claude when `ANTHROPIC_API_KEY` is set in `.env` (model
+`AI_POSTMORTEM_MODEL`, default `claude-opus-5-5`); without it the worker uses the offline,
+rule-based drafter, so everything works with no account.
 
 Sign in at http://localhost:3000 as **alex@acme.test** / **password123** (admin);
 `sam@acme.test`, `jordan@acme.test` and `riley@acme.test` are responders. These are local demo accounts only.
@@ -336,12 +355,20 @@ npm run lint
   hash-chained events, alert runs collapsed, hidden entries survive a refresh, publish blocked while the
   root cause is a placeholder, published text is read-only but action items can still be ticked off,
   reopen, Markdown export without hidden entries, tenant isolation).
+- **Phase 16 (AI drafts)**: redaction (API keys, tokens, emails and IPs never reach the model), alert
+  storms collapsed, long timelines capped head + tail, the prompt fences incident data, hallucinated
+  citations are stripped with a warning, refusals / truncation / bad keys fail at once while rate limits
+  are retried, the sweeper recovers lost jobs, the exact request sent to Claude (structured output,
+  server-side fallback) via a fake client, and the review gate: only chosen sections are applied, the
+  timeline and metrics never change, publishing needs a confirmed review and a confirmed root cause.
 
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs typecheck, lint, all tests
 against Postgres/Redis service containers, the web production build, and the Docker image build.
 
 ## Roadmap
 
+- An eval set for the AI drafter (citation validity, root-cause agreement, invented facts) before
+  changing its prompt or model
 - On-call schedules (rotations) as escalation targets instead of fixed users
 - SMS / push / Slack-app channels and per-user notification preferences (contact methods)
 - Status page for customers, driven by service status

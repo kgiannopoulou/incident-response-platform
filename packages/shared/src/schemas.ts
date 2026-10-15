@@ -6,6 +6,7 @@ import {
   RESPONDER_ROLES,
   SERVICE_STATUSES,
 } from "./domain";
+import { AI_SECTIONS } from "./ai-postmortem";
 
 // Body of POST /api/v1/alerts, sent by monitoring tools (or @irp/alert-sdk):
 //
@@ -168,6 +169,13 @@ export const updatePostmortemSchema = z.object({
   // Times and wording come from the immutable log and can't be edited.
   hiddenTimelineEventIds: z.array(z.number().int().positive()).max(500).optional(),
   status: z.enum(["draft", "published"]).optional(),
+  // The reviewer confirms they have read and edited the sections that were
+  // seeded from an AI draft. Required once before publishing such a postmortem.
+  aiReviewed: z.literal(true).optional(),
+});
+
+export const applyAiDraftSchema = z.object({
+  sections: z.array(z.enum(AI_SECTIONS)).min(1),
 });
 
 export const updateActionItemSchema = z.object({

@@ -281,8 +281,10 @@ export function renderPostmortemMarkdown(pm: {
   actionItems: ActionItem[];
   metrics: Partial<PostmortemMetrics>;
   timeline: PostmortemTimelineEntry[];
+  // Sections seeded from an AI draft, and who confirmed reviewing them.
+  aiAssisted?: { sections: string[]; reviewedBy: string | null };
 }) {
-  const section = (title: string, body: string) => `## ${title}\n\n${body.trim() || "_Not written yet._"}\n`;
+  const section =(title: string, body: string) => `## ${title}\n\n${body.trim() || "_Not written yet._"}\n`;
   const m = pm.metrics;
   const timeline = pm.timeline
     .filter((e) => !e.hidden)
@@ -311,6 +313,13 @@ export function renderPostmortemMarkdown(pm: {
     section("What went poorly", pm.whatWentPoorly),
     section("Action items", items),
     "_Timeline generated from the incident's append-only, hash-chained event log._",
+    ...(pm.aiAssisted
+      ? [
+          "",
+          `_Drafted with AI assistance (${pm.aiAssisted.sections.join(", ")}); ` +
+            (pm.aiAssisted.reviewedBy ? `reviewed by ${pm.aiAssisted.reviewedBy}._` : "not yet reviewed._"),
+        ]
+      : []),
     "",
   ].join("\n");
 }

@@ -8,6 +8,7 @@ import { handleAckTimeout } from "../src/ack-timeout";
 import type { WorkerContext } from "../src/context";
 import { escalateIncident } from "../src/escalation";
 import { sweep } from "../src/sweeper";
+import { rulesDrafter } from "../src/ai-drafter";
 
 let pool: Pool;
 let ctx: WorkerContext;
@@ -25,13 +26,15 @@ beforeAll(async () => {
     escalationsQueue: new Queue(QUEUES.escalations, { connection }),
     webhooksQueue: new Queue(QUEUES.webhooks, { connection }),
     deadLetterQueue: new Queue(QUEUES.deadLetter, { connection }),
+    aiDraftsQueue: new Queue(QUEUES.aiDrafts, { connection }),
+    drafter: rulesDrafter,
     email: async () => ({ messageId: null }),
     webOrigin: "http://fireline.test",
     blockPrivateWebhookTargets: false,
   };
 });
 afterAll(async () => {
-  await Promise.all([ctx.notificationsQueue, ctx.escalationsQueue, ctx.webhooksQueue, ctx.deadLetterQueue].map((q) => q.close()));
+  await Promise.all([ctx.notificationsQueue, ctx.escalationsQueue, ctx.webhooksQueue, ctx.deadLetterQueue, ctx.aiDraftsQueue].map((q) => q.close()));
   await ctx.redis.quit();
   await pool.end();
 });

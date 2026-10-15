@@ -1,6 +1,7 @@
 import { Router } from "express";
 import type { Job } from "bullmq";
 import {
+  aiDraftJobOptions,
   deliverJobOptions,
   escalateJobOptions,
   QUEUES,
@@ -50,7 +51,7 @@ export function adminRouter(deps: Deps) {
   router.get("/queues", async (_req, res) => {
     const states = ["waiting", "active", "delayed", "failed", "completed", "paused"] as const;
     const queues = await Promise.all(
-      [deps.queues.notifications, deps.queues.escalations, deps.queues.webhooks, deps.queues.deadLetter].map(async (q) => ({
+      [deps.queues.notifications, deps.queues.escalations, deps.queues.webhooks, deps.queues.aiDrafts, deps.queues.deadLetter].map(async (q) => ({
         name: q.name,
         counts: await q.getJobCounts(...states),
       }))
@@ -93,6 +94,15 @@ export function adminRouter(deps: Deps) {
       );
       if (!rowCount) throw new HttpError(409, "That webhook delivery is no longer failed");
       await deps.queues.webhooks.add("deliver-webhook", { deliveryId }, webhookJobOptions(deliveryId));
+    } else if (queue === QUEUES.aiDrafts) {
+      const draftId = Number(data.draftId);
+      const { rowCount } = await deps.pool.query(
+        `UPDATE postmortem_ai_drafts SET status = 'queued', error = NULL, completed_at = NULL
+         WHERE id = $1 AND organization_id = $2 AND status = 'failed'`,
+        [draftId, orgId]
+      );
+      if (!rowCount) throw new HttpError(409, "That AI draft is no longer failed");
+      await deps.queues.aiDrafts.add("draft-postmortem", { draftId }, aiDraftJobOptions(draftId));
     } else {
       await deps.queues.escalations.add(job.data.name, { incidentId: Number(data.incidentId) }, escalateJobOptions());
     }

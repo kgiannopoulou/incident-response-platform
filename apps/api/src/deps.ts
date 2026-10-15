@@ -9,7 +9,7 @@ import type { RealtimeHub } from "./lib/realtime";
 export type Deps = {
   pool: Pool;
   redis: Redis; // publisher connection
-  queues: { notifications: Queue; escalations: Queue; webhooks: Queue; deadLetter: Queue };
+  queues: { notifications: Queue; escalations: Queue; webhooks: Queue; deadLetter: Queue; aiDrafts: Queue };
   hub: RealtimeHub;
   rateLimiter: RateLimiter;
   jwtSecret: string;

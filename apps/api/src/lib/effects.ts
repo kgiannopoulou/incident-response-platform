@@ -1,6 +1,7 @@
 import { withTransaction, type PoolClient } from "@irp/database";
 import {
   ackTimeoutJobId,
+  aiDraftJobOptions,
   ackTimeoutJobOptions,
   deliverJobOptions,
   escalateJobOptions,
@@ -27,6 +28,7 @@ export class Effects {
   private escalations: { incidentId: number; name: string }[] = [];
   private ackTimeouts: { incidentId: number; at: Date }[] = [];
   private cancelledAckTimeouts: number[] = [];
+  private aiDrafts: number[] = [];
 
   publish(organizationId: number, event: RealtimeEvent) {
     this.events.push({ organizationId, event });
@@ -59,6 +61,11 @@ export class Effects {
     this.cancelledAckTimeouts.push(incidentId);
   }
 
+  // Ask the worker to write an AI postmortem draft (a row already exists).
+  generateAiDraft(draftId: number) {
+    this.aiDrafts.push(draftId);
+  }
+
   async flush(deps: Pick<Deps, "redis" | "queues">) {
     try {
       for (const { organizationId, event } of this.events) {
@@ -79,6 +86,9 @@ export class Effects {
       }
       for (const incidentId of this.cancelledAckTimeouts) {
         await deps.queues.escalations.remove(ackTimeoutJobId(incidentId)).catch(() => 0);
+      }
+      for (const draftId of this.aiDrafts) {
+        await deps.queues.aiDrafts.add("draft-postmortem", { draftId }, aiDraftJobOptions(draftId));
       }
     } catch (err) {
       console.error("Post-commit side effects failed; the worker sweeper will recover:", err);

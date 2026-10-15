@@ -1,4 +1,4 @@
-import { deliverJobOptions, webhookJobOptions } from "@irp/shared";
+import { aiDraftJobOptions, deliverJobOptions, webhookJobOptions } from "@irp/shared";
 import type { WorkerContext } from "./context";
 import { handleAckTimeout } from "./ack-timeout";
 import { escalateIncident } from "./escalation";
@@ -60,5 +60,19 @@ export async function sweep(ctx: WorkerContext) {
   for (const { id } of stuckHooks) {
     await ctx.webhooksQueue.add("deliver-webhook", { deliveryId: id }, webhookJobOptions(id));
   }
-  return { escalated, ackTimeouts, requeued: stuck.length + stuckHooks.length };
+  // AI drafts: re-enqueue queued ones whose job was lost; give up on ones a
+  // worker started long ago and never finished (it died mid-request).
+  const { rows: stuckDrafts } = await ctx.pool.query<{ id: number }>(
+    `SELECT id FROM postmortem_ai_drafts WHERE status = 'queued' AND created_at < now() - interval '60 seconds'
+     ORDER BY id LIMIT 50`
+  );
+  for (const { id } of stuckDrafts) {
+    await ctx.aiDraftsQueue.add("draft-postmortem", { draftId: id }, aiDraftJobOptions(id));
+  }
+  await ctx.pool.query(
+    `UPDATE postmortem_ai_drafts SET status = 'failed', error = 'The worker stopped while generating this draft; generate it again',
+            completed_at = now()
+     WHERE status = 'generating' AND started_at < now() - interval '10 minutes'`
+  );
+  return { escalated, ackTimeouts, requeued: stuck.length + stuckHooks.length + stuckDrafts.length };
 }

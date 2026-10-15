@@ -10,6 +10,7 @@ import { deliverNotification } from "../src/delivery";
 import { Heartbeat } from "../src/heartbeat";
 import { escalateIncident } from "../src/escalation";
 import { sweep } from "../src/sweeper";
+import { rulesDrafter } from "../src/ai-drafter";
 
 let pool: Pool;
 let ctx: WorkerContext;
@@ -34,6 +35,8 @@ beforeAll(async () => {
     escalationsQueue: new Queue(QUEUES.escalations, { connection }),
     webhooksQueue: new Queue(QUEUES.webhooks, { connection }),
     deadLetterQueue: new Queue(QUEUES.deadLetter, { connection }),
+    aiDraftsQueue: new Queue(QUEUES.aiDrafts, { connection }),
+    drafter: rulesDrafter,
     email,
     webOrigin: "http://fireline.test",
     blockPrivateWebhookTargets: false,
@@ -44,6 +47,7 @@ afterAll(async () => {
   await ctx.escalationsQueue.close();
   await ctx.webhooksQueue.close();
   await ctx.deadLetterQueue.close();
+  await ctx.aiDraftsQueue.close();
   await ctx.redis.quit();
   await pool.end();
 });

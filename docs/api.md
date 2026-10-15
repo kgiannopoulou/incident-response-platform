@@ -143,7 +143,20 @@ stores a SHA-256 hash and a display prefix (`ir_live_a8f83e7c`).
 | POST | `/incidents/:number/postmortem` | — | Draft it, or refresh metrics + timeline from the event log (written text and hidden entries are kept). `409` unless the incident is resolved |
 | PUT | `/incidents/:number/postmortem` | `{ summary?, impact?, rootCause?, resolution?, whatWentWell?, whatWentPoorly?, actionItems?, hiddenTimelineEventIds?, status? }` | `status: "published"` publishes (`422` while the root cause is still the generated placeholder); once published, edits are `409` unless the same request sends `status: "draft"` (reopen) |
 | PATCH | `/incidents/:number/postmortem/action-items/:id` | `{ done?, owner?, dueDate? }` | Allowed after publishing |
-| GET | `/incidents/:number/postmortem/markdown` | — | `text/markdown` download, `INC-142-postmortem.md`; hidden timeline entries are left out |
+| GET | `/incidents/:number/postmortem/markdown` | — | `text/markdown` download, `INC-142-postmortem.md`; hidden timeline entries are left out; notes which sections were AI-assisted and who reviewed them |
+
+`PUT` also takes `aiReviewed: true`: the reviewer confirms they reviewed the AI-assisted sections.
+Publishing is `422` while `ai_review_pending` is true without it, and while the root cause still
+starts with `[Unconfirmed AI hypothesis`.
+
+### AI-assisted drafts
+
+| Method | Path | Body | Notes |
+| --- | --- | --- | --- |
+| GET | `/incidents/:number/postmortem/ai-drafts` | — | Latest 5: `status` (`queued`, `generating`, `ready`, `failed`, `applied`, `discarded`), `provider` (`claude` / `rules`), `model`, `output`, `warnings[{ section, message }]`, `usage`, `input_digest`, `input_events`, `applied_sections`, `error` |
+| POST | `/incidents/:number/postmortem/ai-drafts` | — | `202 { draft }` and a worker job. `409` unless the incident is resolved, while the postmortem is published, or while another draft is generating |
+| POST | `/incidents/:number/postmortem/ai-drafts/:id/apply` | `{ sections: [...] }` — any of `summary`, `impact`, `rootCause`, `resolution`, `whatWentWell`, `whatWentPoorly`, `actionItems` | Copies those sections into the postmortem (action items appended), marks them AI-assisted, sets `ai_review_pending`. `409` if the draft isn't ready or the postmortem is published |
+| POST | `/incidents/:number/postmortem/ai-drafts/:id/discard` | — | `204` |
 
 ## Escalation policies
 

@@ -547,6 +547,67 @@ timeline and responders) produces the whole document, and the earlier design dec
 - **Export.** `renderPostmortemMarkdown()` renders the document (header table, sections, `[ ]`/`[x]`
   action items) for a wiki or a PR.
 
+## AI-assisted postmortem drafts
+
+Added last, on purpose, and kept on a short leash. The rule the design follows: **AI-generated
+postmortems are treated as drafts; the source timeline data remains authoritative.**
+
+```
+"Generate draft" ──► postmortem_ai_drafts (queued) ──► ai-drafts queue ──► worker
+                                                                            │
+   incident + alerts + responders + timeline (incl. notes, resolution)  ◄───┘ read from source tables,
+        │  redact(): keys, tokens, emails, IPs, secret-looking metadata      never from editable text
+        │  cap: 40 distinct alerts (storms counted, not repeated), 250 events
+        ▼
+   Claude (claude-opus-5-5) — structured output: the answer must parse as aiPostmortemOutputSchema
+        ▼
+   checkAiDraft(): drop citations of events that don't exist, flag uncited claims, trim lists
+        ▼
+   draft row 'ready' ── reviewer ticks sections ──► apply ──► postmortem text (AI-assisted, review pending)
+                                                                │
+                              publish ◄── "I have reviewed…" + root cause no longer "[Unconfirmed AI hypothesis…]"
+```
+
+- **Grounded, with citations that are checked.** Every timeline event goes to the model with its
+  `eventId`; every statement comes back with the ids that support it. The validator removes ids that
+  aren't in the incident (a hallucinated `#9999` becomes a visible warning) and flags a root cause
+  that cites nothing. The UI shows citations as `#812 14:07` chips next to each claim, so reviewing
+  means checking evidence rather than re-reading the whole incident.
+- **Schema, not prose parsing.** The request uses structured outputs with a Zod schema
+  (`incidentSummary`, `customerImpact`, `probableRootCause{statement, confidence, evidenceEventIds}`,
+  `responseSummary`, `whatWentWell[]`, `whatCouldImprove[]`, `suggestedActionItems[]`,
+  `openQuestions[]`), so a malformed answer is a failed draft, not a corrupted postmortem.
+  `openQuestions` is where the model puts what the data can't answer ("how many orders failed?")
+  instead of inventing a number.
+- **Untrusted input stays data.** Alert text and notes come from monitoring tools and people. The
+  prompt fences them in `<incident_data>` and tells the model to ignore instructions inside; the
+  output is only ever a suggestion a person applies, so a prompt-injected alert can't publish anything.
+- **Redaction before egress.** `redact()` / `redactMetadata()` strip `ir_live_` keys, bearer tokens,
+  JWTs, `password=` style secrets, long hex strings, email addresses and IPs, drop metadata keys that
+  look sensitive and cap metadata size. The draft stores a SHA-256 of the exact input
+  (`input_digest`) and how many events it covered, so "what did the model see?" has an answer later.
+- **It never writes the postmortem itself.** A draft is a separate row. Applying copies the chosen
+  sections (narrative replaced, action items appended without duplicates), marks them *AI-assisted*
+  and sets `ai_review_pending`. The timeline and metrics are never touched — they come from the event
+  log. Publishing is refused until the reviewer confirms the review (`aiReviewed: true`, recorded with
+  who and when) *and* the root cause no longer starts with `[Unconfirmed AI hypothesis …]`. Applying
+  more sections later asks for a fresh review. The Markdown export says which sections were
+  AI-assisted and who reviewed them.
+- **A background job, like every other slow side effect.** The HTTP request only writes the row and
+  enqueues `draft-postmortem { draftId }`. The worker calls the model (tens of seconds) with the
+  SDK's own retries for short blips, BullMQ retries (3 attempts, 15 s → 30 s) for longer ones, and
+  the dead-letter queue after that. Refusals, bad keys and schema mismatches are permanent
+  (`UnrecoverableError`) and fail at once instead of burning retries. A partial unique index allows one
+  generation in flight per incident; the sweeper re-enqueues drafts whose job was lost and fails ones a
+  dead worker left `generating`.
+- **Refusal fallback.** Requests set `fallbacks: "default"` (server-side fallback beta), so if the
+  model declines for policy reasons the API retries on its recommended fallback model; the model that
+  actually answered is stored with the draft.
+- **Works without an account.** With no `ANTHROPIC_API_KEY` the worker uses a deterministic,
+  rule-based drafter that produces the same shape from the same context (root cause from the notes,
+  evidence ids included). It's labelled *Offline rules (no AI model configured)* in the UI — never
+  as AI — and it's what the tests and the demo use, so neither depends on a model.
+
 ## What I'd do next for production
 
 - **Outbox table** instead of post-commit flush + sweeper, if more event types need guaranteed delivery.
@@ -556,3 +617,5 @@ timeline and responders) produces the whole document, and the earlier design dec
 - **Scoped keys** (trigger-only vs. resolve) and per-organization quotas on top of per-key limits.
 - **On-call schedules** (rotations) as a third escalation target type next to users and teams.
 - **OpenTelemetry** traces across API → queue → worker.
+- **An eval set for the AI drafter**: resolved incidents with human-written postmortems, scored on
+  citation validity, root-cause agreement and invented facts, run before changing the prompt or model.

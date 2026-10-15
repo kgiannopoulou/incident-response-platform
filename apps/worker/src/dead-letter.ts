@@ -18,6 +18,13 @@ async function organizationOf(ctx: WorkerContext, queue: WorkQueue, data: Record
     );
     return rows[0]?.organization_id ?? null;
   }
+  if (queue === "ai-drafts") {
+    const { rows } = await ctx.pool.query<{ organization_id: number }>(
+      `SELECT organization_id FROM postmortem_ai_drafts WHERE id = $1`,
+      [data.draftId]
+    );
+    return rows[0]?.organization_id ?? null;
+  }
   const { rows } =
     queue === "notifications"
       ? await ctx.pool.query<{ organization_id: number }>(

@@ -25,6 +25,7 @@ const QUEUE_HELP: Record<string, string> = {
   notifications: "Email pages — 5 attempts, exponential backoff (2 s → 16 s)",
   escalations: "incident-created + delayed escalation steps",
   webhooks: "Signed incident events — 5 attempts, 5 s → 40 s",
+  "ai-drafts": "AI postmortem drafts — 3 attempts, 15 s → 30 s",
   "dead-letter": "Jobs that used up every retry, kept for review",
 };
 
@@ -76,7 +77,7 @@ export default function SystemPage() {
         <Loading />
       ) : (
         <>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
             {queues.data!.queues.map((q) => (
               <Card key={q.name} title={<code>{q.name}</code>}>
                 <p className="mb-3 text-xs text-zinc-500">{QUEUE_HELP[q.name]}</p>

@@ -16,6 +16,7 @@ const queues = {
   escalations: new Queue(QUEUES.escalations, { connection }),
   webhooks: new Queue(QUEUES.webhooks, { connection }),
   deadLetter: new Queue(QUEUES.deadLetter, { connection }),
+  aiDrafts: new Queue(QUEUES.aiDrafts, { connection }),
 };
 const hub = new RealtimeHub(subscriber, redis.duplicate());
 const rateLimiter = new RateLimiter(redis, { authFailuresPerMinute: env.authFailuresPerMinute });

@@ -48,6 +48,8 @@ services:
       WEB_ORIGIN: http://localhost:3000
       SMTP_URL: smtp://mailpit:1025
       EMAIL_FROM: Fireline <pager@fireline.local>
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AI_POSTMORTEM_PROVIDER: ${AI_POSTMORTEM_PROVIDER:-auto}
     depends_on:
       postgres: { condition: service_healthy }
 

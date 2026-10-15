@@ -12,6 +12,7 @@ import type { EmailMessage, WorkerContext } from "../src/context";
 import { deliverNotification } from "../src/delivery";
 import { escalateIncident } from "../src/escalation";
 import { deliverWebhook, isPrivateAddress } from "../src/webhooks";
+import { rulesDrafter } from "../src/ai-drafter";
 
 // A local receiver standing in for the customer's webhook endpoint. Each
 // test decides what it answers.
@@ -48,6 +49,8 @@ beforeAll(async () => {
     escalationsQueue: new Queue(QUEUES.escalations, { connection }),
     webhooksQueue: new Queue(QUEUES.webhooks, { connection }),
     deadLetterQueue: new Queue(QUEUES.deadLetter, { connection }),
+    aiDraftsQueue: new Queue(QUEUES.aiDrafts, { connection }),
+    drafter: rulesDrafter,
     email: async (message) => {
       emails.push(message);
       return { messageId: "<abc@mailpit>" };
@@ -57,7 +60,7 @@ beforeAll(async () => {
   };
 });
 afterAll(async () => {
-  await Promise.all([ctx.notificationsQueue, ctx.escalationsQueue, ctx.webhooksQueue, ctx.deadLetterQueue].map((q) => q.close()));
+  await Promise.all([ctx.notificationsQueue, ctx.escalationsQueue, ctx.webhooksQueue, ctx.deadLetterQueue, ctx.aiDraftsQueue].map((q) => q.close()));
   await ctx.redis.quit();
   await pool.end();
   receiver.close();

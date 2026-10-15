@@ -4,6 +4,7 @@ import type { Redis } from "ioredis";
 import nodemailer from "nodemailer";
 import type { RealtimeEvent } from "@irp/shared";
 import { publishRealtime } from "@irp/shared/realtime";
+import type { PostmortemDrafter } from "./ai-drafter";
 
 export type WorkerContext = {
   pool: Pool;
@@ -12,7 +13,10 @@ export type WorkerContext = {
   escalationsQueue: Queue;
   webhooksQueue: Queue;
   deadLetterQueue: Queue;
+  aiDraftsQueue: Queue;
   email: EmailSender;
+  // Writes AI postmortem drafts (Claude, or offline rules without a key).
+  drafter: PostmortemDrafter;
   // Links in emails and webhook payloads point here.
   webOrigin: string;
   // Refuse webhook URLs that resolve to private / loopback addresses (SSRF

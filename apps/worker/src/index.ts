@@ -1,8 +1,10 @@
 import { Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import { createPool } from "@irp/database";
-import { QUEUES, type DeliverNotificationJob, type DeliverWebhookJob, type EscalateIncidentJob } from "@irp/shared";
+import { QUEUES, type AiDraftJob, type DeliverNotificationJob, type DeliverWebhookJob, type EscalateIncidentJob } from "@irp/shared";
 import { handleAckTimeout } from "./ack-timeout";
+import { drafterFromEnv } from "./ai-drafter";
+import { generateAiDraft } from "./ai-drafts";
 import { createEmailSender, type WorkerContext } from "./context";
 import { handleFailures } from "./dead-letter";
 import { deliverNotification } from "./delivery";
@@ -22,6 +24,8 @@ const ctx: WorkerContext = {
   escalationsQueue: new Queue(QUEUES.escalations, { connection }),
   webhooksQueue: new Queue(QUEUES.webhooks, { connection }),
   deadLetterQueue: new Queue(QUEUES.deadLetter, { connection }),
+  aiDraftsQueue: new Queue(QUEUES.aiDrafts, { connection }),
+  drafter: drafterFromEnv(),
   email: createEmailSender(process.env.SMTP_URL || undefined, process.env.EMAIL_FROM ?? "Fireline <pager@fireline.local>"),
   webOrigin: process.env.WEB_ORIGIN ?? "http://localhost:3000",
   blockPrivateWebhookTargets: process.env.WEBHOOK_BLOCK_PRIVATE_NETWORKS === "true",
@@ -52,9 +56,18 @@ const webhooks = new Worker<DeliverWebhookJob>(
   { connection, concurrency: 10 }
 );
 
+// AI postmortem drafts: slow (tens of seconds) and rate-limited by the
+// provider, so few at a time.
+const aiDrafts = new Worker<AiDraftJob>(
+  QUEUES.aiDrafts,
+  async (job) => generateAiDraft(ctx, job.data.draftId, job.attemptsMade + 1 >= (job.opts.attempts ?? 1)),
+  { connection, concurrency: 2 }
+);
+
 handleFailures(ctx, QUEUES.notifications, notifications, heartbeat.stats);
 handleFailures(ctx, QUEUES.escalations, escalations, heartbeat.stats);
 handleFailures(ctx, QUEUES.webhooks, webhooks, heartbeat.stats);
+handleFailures(ctx, QUEUES.aiDrafts, aiDrafts, heartbeat.stats);
 
 // The recovery sweep runs on a plain timer, not as a BullMQ repeatable job:
 // it exists to recover from losing Redis state, so it must not live in
@@ -75,7 +88,9 @@ const sweepTimer = setInterval(async () => {
   }
 }, 10_000);
 heartbeat.start();
-console.log(`Worker ${heartbeat.stats.id} started: notifications, escalations, webhooks queues; sweeping every 10s.`);
+console.log(
+  `Worker ${heartbeat.stats.id} started: notifications, escalations, webhooks, ai-drafts (${ctx.drafter.provider}${ctx.drafter.model ? ` ${ctx.drafter.model}` : ""}) queues; sweeping every 10s.`
+);
 
 // Graceful shutdown: let in-flight jobs finish (Worker.close waits for
 // them), then release connections. A job interrupted by a hard kill is
@@ -83,9 +98,9 @@ console.log(`Worker ${heartbeat.stats.id} started: notifications, escalations, w
 async function shutdown() {
   console.log("Shutting down worker...");
   clearInterval(sweepTimer);
-  await Promise.all([notifications.close(), escalations.close(), webhooks.close()]);
+  await Promise.all([notifications.close(), escalations.close(), webhooks.close(), aiDrafts.close()]);
   await heartbeat.stop();
-  await Promise.all([ctx.notificationsQueue.close(), ctx.escalationsQueue.close(), ctx.webhooksQueue.close(), ctx.deadLetterQueue.close()]);
+  await Promise.all([ctx.notificationsQueue.close(), ctx.escalationsQueue.close(), ctx.webhooksQueue.close(), ctx.deadLetterQueue.close(), ctx.aiDraftsQueue.close()]);
   await ctx.redis.quit();
   await ctx.pool.end();
   process.exit(0);

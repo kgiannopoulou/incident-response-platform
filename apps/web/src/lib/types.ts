@@ -1,5 +1,8 @@
 import type {
   ActionItem,
+  AiDraftWarning,
+  AiPostmortemOutput,
+  AiSection,
   AlertSeverity,
   AlertStatus,
   IncidentSeverity,
@@ -161,6 +164,30 @@ export type Postmortem = {
   service_name: string | null;
   triggered_at: string;
   resolved_at: string | null;
+  ai_assisted_sections: AiSection[];
+  ai_review_pending: boolean;
+  ai_reviewed_by_name: string | null;
+  ai_reviewed_at: string | null;
+};
+
+// A suggestion from the AI drafter (or the offline rules), awaiting review.
+export type AiDraft = {
+  id: number;
+  status: "queued" | "generating" | "ready" | "failed" | "applied" | "discarded";
+  provider: "claude" | "rules" | null;
+  model: string | null;
+  output: AiPostmortemOutput | null;
+  warnings: AiDraftWarning[];
+  usage: { inputTokens?: number; outputTokens?: number } | null;
+  error: string | null;
+  attempts: number;
+  applied_sections: AiSection[];
+  input_digest: string | null;
+  input_events: number | null;
+  created_at: string;
+  completed_at: string | null;
+  requested_by_name: string | null;
+  reviewed_by_name: string | null;
 };
 
 export type PostmortemSummary = {
