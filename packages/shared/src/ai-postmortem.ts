@@ -394,6 +394,12 @@ export function ruleBasedPostmortemDraft(context: AiPostmortemContext): AiPostmo
   if (!notes.length) improve.push({ point: "No investigation notes were recorded, so the reasoning behind the fix is not captured.", evidenceEventIds: [] });
   if (totalAlerts > 5) improve.push({ point: `${totalAlerts} alerts fired for one problem, which adds noise for responders.`, evidenceEventIds: ids(created) });
   if (!firstAlert) improve.push({ point: "No automated alert fired; the incident was declared by hand.", evidenceEventIds: ids(created) });
+  if (!improve.length) {
+    improve.push({
+      point: "The timeline shows no delays or escalations; ask the responders what slowed them down or what they had to guess.",
+      evidenceEventIds: [],
+    });
+  }
 
   const actions: AiPostmortemOutput["suggestedActionItems"] = [];
   if (causeNote) actions.push({ description: `Add monitoring for the condition described at ${hhmm(causeNote.at)}: "${clip(causeNote.message, 80)}"`, rationale: "Responders identified it during the incident.", evidenceEventIds: ids(causeNote) });

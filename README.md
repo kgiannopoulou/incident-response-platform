@@ -16,6 +16,14 @@ and an append-only, hash-verified timeline that updates live.*
 
 ![Dashboard](docs/screenshots/dashboard.jpg)
 
+*The dashboard during **▶ Simulate production incident**: the scenario's steps light up as alerts are
+ingested, active incidents worst-first with live age, and the last 30 days — MTTA / MTTR against the
+previous window, incidents per day stacked by severity, per service and per severity.*
+
+| AI postmortem draft — a suggestion with cited events | Review gate after applying sections |
+| --- | --- |
+| ![AI draft](docs/screenshots/postmortem-ai-draft.jpg) | ![AI review](docs/screenshots/postmortem-ai-review.jpg) |
+
 | Escalation, live | Acknowledgement timeout countdown |
 | --- | --- |
 | ![Incident with escalation](docs/screenshots/incident-escalation.jpg) | ![Acknowledgement timeout](docs/screenshots/incident-ack-timeout.jpg) |
