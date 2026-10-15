@@ -136,6 +136,12 @@ Monitoring tool / app ──POST /api/v1/alerts──► API key (hashed lookup)
   them". Runs as a worker job with retries and the dead-letter queue; without an API key a
   deterministic offline drafter (labelled as such, not as AI) keeps the workflow usable.
   **AI-generated postmortems are treated as drafts; source timeline data remains authoritative.**
+- **Dashboard** — *Active incidents* worst-first with a live age ("🔴 SEV-1 Checkout unavailable
+  14m"), then the last 7 / 30 / 90 days: incident count, SEV-1s, **MTTA** (mean time to acknowledge)
+  and **MTTR** (mean time to resolve) with the change against the previous window, incidents per day
+  stacked by severity (hover tooltip, table view), incidents per service with their MTTR, and a
+  per-severity table with medians and p90s. Computed in SQL from the state machine's timestamps; the
+  seed adds 60 days of history so it isn't empty on a fresh install.
 - **Service health** derived from open incidents (SEV1 → outage, SEV2 → degraded), plus maintenance
   windows that record alerts without paging.
 - **Multi-tenant** (organizations), with `admin` / `responder` roles.
@@ -279,7 +285,7 @@ curl -X POST http://localhost:4000/api/v1/alerts \
   "deduplicationKey": "checkout-errors",
   "decision": "incident_created",
   "reason": "Default rule: critical/high alerts open an incident",
-  "incident": { "id": 2, "number": 2, "status": "triggered" }
+  "incident": { "id": 64, "number": 64, "status": "triggered" }
 }
 ```
 
@@ -355,6 +361,10 @@ npm run lint
   hash-chained events, alert runs collapsed, hidden entries survive a refresh, publish blocked while the
   root cause is a placeholder, published text is read-only but action items can still be ticked off,
   reopen, Markdown export without hidden entries, tenant isolation).
+- **Phase 17 (metrics)**: MTTA/MTTR means, medians and p90 against hand-computed values, open
+  incidents counted for MTTA but not MTTR, the previous-window comparison, all four severities and
+  every service present with zeros, one bucket per UTC day, active incidents ordered worst-first then
+  oldest, tenant isolation and the allowed windows.
 - **Phase 16 (AI drafts)**: redaction (API keys, tokens, emails and IPs never reach the model), alert
   storms collapsed, long timelines capped head + tail, the prompt fences incident data, hallucinated
   citations are stripped with a warning, refusals / truncation / bad keys fail at once while rate limits

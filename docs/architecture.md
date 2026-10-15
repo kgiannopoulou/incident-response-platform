@@ -547,6 +547,26 @@ timeline and responders) produces the whole document, and the earlier design dec
 - **Export.** `renderPostmortemMarkdown()` renders the document (header table, sections, `[ ]`/`[x]`
   action items) for a wiki or a PR.
 
+## Dashboard metrics
+
+`GET /metrics?days=7|30|90` computes everything in one round of parallel SQL queries over the
+incident timestamps the state machine already stamps (`triggered_at`, `acknowledged_at`,
+`resolved_at`, `ack_timed_out_at`) — no counters to keep in sync, and nothing to backfill when a
+definition changes.
+
+- **MTTA / MTTR** are means over incidents *triggered* in the window, as most tools report them, with
+  the **median** and **p90** next to them (`percentile_cont`): one nine-hour outlier moves the mean a
+  lot and the median not at all, and the p90 is what the slowest incidents feel like.
+- **Deltas** compare with the window of the same length before it, and say which direction is better
+  (lower is better for durations; for counts the arrow has no judgement).
+- **Per day** uses `generate_series` so quiet days are real zeros, split by severity; **per severity**
+  always returns all four rows; **per service** includes services with no incidents.
+- The chart is a hand-written SVG: severity is ordinal, so it is one red hue stepped in lightness
+  (validated for contrast and monotone steps on the dark surface), stacked from SEV-1 at the baseline,
+  with a per-day tooltip, a legend and a table view.
+- The demo seed generates 60 days of believable history (deterministic PRNG) so a fresh install's
+  dashboard shows trends; the previous 30 days are deliberately slower so the deltas tell a story.
+
 ## AI-assisted postmortem drafts
 
 Added last, on purpose, and kept on a short leash. The rule the design follows: **AI-generated

@@ -158,6 +158,33 @@ starts with `[Unconfirmed AI hypothesis`.
 | POST | `/incidents/:number/postmortem/ai-drafts/:id/apply` | `{ sections: [...] }` — any of `summary`, `impact`, `rootCause`, `resolution`, `whatWentWell`, `whatWentPoorly`, `actionItems` | Copies those sections into the postmortem (action items appended), marks them AI-assisted, sets `ai_review_pending`. `409` if the draft isn't ready or the postmortem is published |
 | POST | `/incidents/:number/postmortem/ai-drafts/:id/discard` | — | `204` |
 
+## Metrics
+
+### `GET /metrics?days=7|30|90` *(session)*
+
+Dashboard metrics for incidents **triggered** in the last `days` (default 30; anything else is `400`).
+
+```json
+{
+  "window": { "days": 30 },
+  "summary":  { "incidents": 37, "sev1": 6, "still_open": 0, "ack_timeouts": 2,
+                "mtta_seconds": 222, "mttr_seconds": 2432,
+                "tta_p50_seconds": 168, "ttr_p50_seconds": 2508, "ttr_p90_seconds": 3642 },
+  "previous": { "...": "the same aggregates for the 30 days before" },
+  "bySeverity": [{ "severity": "sev1", "incidents": 6, "mtta_seconds": 162, "...": "" }],
+  "byService":  [{ "id": 1, "name": "Checkout API", "status": "operational", "incidents": 14, "sev1": 4,
+                   "mttr_seconds": 2141, "open_incidents": 0, "...": "" }],
+  "daily":  [{ "date": "2026-10-15", "sev1": 0, "sev2": 1, "sev3": 0, "sev4": 0 }],
+  "active": [{ "number": 64, "title": "...", "severity": "sev1", "status": "triggered", "triggered_at": "...",
+               "service_name": "Checkout API", "alert_count": 4 }]
+}
+```
+
+MTTA is the mean of `acknowledged_at − triggered_at` over acknowledged incidents, MTTR the mean of
+`resolved_at − triggered_at` over resolved ones. `bySeverity` always has all four severities;
+`daily` has one UTC day per row, zeros included; `active` is every open incident, worst severity
+first, then oldest. Scoped to the caller's organization.
+
 ## Escalation policies
 
 | Method | Path | Body | Notes |

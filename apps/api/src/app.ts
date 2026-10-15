@@ -9,6 +9,7 @@ import { alertsRouter } from "./routes/alerts";
 import { authRouter } from "./routes/auth";
 import { escalationPoliciesRouter } from "./routes/escalation-policies";
 import { incidentsRouter } from "./routes/incidents";
+import { metricsRouter } from "./routes/metrics";
 import { orgRouter } from "./routes/org";
 import { postmortemListRouter, postmortemRouter } from "./routes/postmortems";
 import { servicesRouter } from "./routes/services";
@@ -45,6 +46,7 @@ export function createApp(deps: Deps) {
   v1.use("/incidents/:number/postmortem", postmortemRouter(deps));
   v1.use("/incidents", incidentsRouter(deps));
   v1.use("/postmortems", postmortemListRouter(deps));
+  v1.use("/metrics", metricsRouter(deps));
   v1.use("/services", servicesRouter(deps));
   v1.use("/escalation-policies", escalationPoliciesRouter(deps));
   v1.use("/admin", requireAdmin, adminRouter(deps));

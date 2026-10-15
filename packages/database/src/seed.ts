@@ -16,6 +16,7 @@ import bcrypt from "bcryptjs";
 import { ulid } from "@irp/shared";
 import { apiKeyDisplayPrefix, hashApiKey } from "@irp/shared/crypto";
 import { createPool, withTransaction } from "./index";
+import { incidentHistory } from "./seed-history";
 
 const pool = createPool();
 
@@ -153,8 +154,8 @@ async function main() {
       platformPolicy,
       "ir_live_dev_auth_service"
     );
-    await service("PostgreSQL Primary", "postgres-primary", "Primary OLTP database", platform, platformPolicy, "ir_live_dev_postgres_primary");
-    await service("IoT Gateway", "iot-gateway", "MQTT ingestion from store sensors", platform, platformPolicy, "ir_live_dev_iot_gateway");
+    const postgres = await service("PostgreSQL Primary", "postgres-primary", "Primary OLTP database", platform, platformPolicy, "ir_live_dev_postgres_primary");
+    const iot = await service("IoT Gateway", "iot-gateway", "MQTT ingestion from store sensors", platform, platformPolicy, "ir_live_dev_iot_gateway");
 
     // Matching rules for the checkout service, to show rule evaluation.
     await db.query(
@@ -166,54 +167,90 @@ async function main() {
       [checkout]
     );
 
-    // One historical, already-resolved incident so the dashboard isn't empty.
-    const {
-      rows: [past],
-    } = await db.query(
-      `INSERT INTO incidents (organization_id, number, service_id, title, severity, status, dedup_key,
-                              commander_id, escalation_level, alert_count,
-                              triggered_at, acknowledged_at, mitigated_at, resolved_at)
-       VALUES ($1, 1, $2, 'Login latency above 3s', 'sev2', 'resolved', 'seed-auth-latency', $3, 1, 1,
-               now() - interval '3 days', now() - interval '3 days' + interval '6 minutes',
-               now() - interval '3 days' + interval '37 minutes',
-               now() - interval '3 days' + interval '48 minutes')
-       RETURNING id, triggered_at`,
-      [org.id, auth, users.jordan]
-    );
-    const {
-      rows: [pastAlert],
-    } = await db.query(
-      `INSERT INTO alerts (organization_id, service_id, public_id, dedup_key, title, description, severity,
-                           source, status, received_at, resolved_at)
-       VALUES ($1, $2, $4, 'seed-auth-latency', 'Login p95 latency 3400ms', 'p95 above the 3s SLO for 5 minutes',
-               'high', 'prometheus:auth-latency', 'resolved', $3, $3::timestamptz + interval '47 minutes')
-       RETURNING id`,
-      [org.id, auth, past.triggered_at, `alert_${ulid(new Date(past.triggered_at).getTime())}`]
-    );
-    await db.query(`UPDATE organizations SET incident_counter = 1 WHERE id = $1`, [org.id]);
-    await db.query(`INSERT INTO incident_alerts (incident_id, alert_id) VALUES ($1, $2)`, [past.id, pastAlert.id]);
-    await db.query(
-      `INSERT INTO incident_responders (incident_id, user_id, role)
-       VALUES ($1, $2, 'commander'), ($1, $3, 'responder'), ($1, $4, 'observer')`,
-      [past.id, users.jordan, users.sam, users.alex]
-    );
-    const events: [string, number | null, string, number][] = [
-      ["INCIDENT_CREATED", null, "Incident opened by alert from prometheus:auth-latency", 0],
-      ["NOTIFICATION_SENT", null, "Paged Jordan Lee (escalation level 1)", 0],
-      ["INCIDENT_ACKNOWLEDGED", users.jordan, "Acknowledged", 6],
-      ["STATUS_CHANGED", users.jordan, "Investigation started", 9],
-      ["NOTE_ADDED", users.jordan, "Connection pool to the session store saturated after a traffic spike", 21],
-      ["NOTE_ADDED", users.jordan, "Raised pool size from 20 to 60 and restarted auth pods", 35],
-      ["STATUS_CHANGED", users.jordan, "Mitigated — customer impact stopped: p95 back under 1s", 37],
-      ["INCIDENT_RESOLVED", users.jordan, "Resolved: latency back under 400ms after pool resize", 48],
-    ];
-    for (const [type, actor, message, minutes] of events) {
-      await db.query(
-        `INSERT INTO timeline_events (incident_id, event_type, actor_id, message, created_at)
-         VALUES ($1, $2, $3, $4, $5::timestamptz + make_interval(mins => $6))`,
-        [past.id, type, actor, message, past.triggered_at, minutes]
+    // Sixty days of resolved incidents (seed-history.ts), numbered in the
+    // order they happened, each with its alert, commander and a timeline
+    // through to resolution — so the dashboard metrics and incident pages
+    // have history on a fresh install.
+    const serviceIds = { checkout, auth, postgres, iot };
+    const history = incidentHistory();
+    const at = (base: Date, minutes: number) => new Date(base.getTime() + minutes * 60_000);
+    for (const [i, h] of history.entries()) {
+      const triggeredAt = new Date(Date.now() - h.minutesAgo * 60_000);
+      const commander = users[h.commander];
+      const {
+        rows: [incident],
+      } = await db.query(
+        `INSERT INTO incidents (organization_id, number, service_id, title, severity, status, dedup_key, commander_id,
+                                escalation_level, alert_count, triggered_at, acknowledged_at, mitigated_at, resolved_at,
+                                ack_timed_out_at)
+         VALUES ($1, $2, $3, $4, $5, 'resolved', $6, $7, $8, 1, $9, $10, $11, $12, $13) RETURNING id`,
+        [
+          org.id,
+          i + 1,
+          serviceIds[h.service],
+          h.title,
+          h.severity,
+          `seed-history-${i + 1}`,
+          commander,
+          h.ackTimedOut ? 2 : 1,
+          triggeredAt,
+          at(triggeredAt, h.ackAfter),
+          h.mitigateAfter === null ? at(triggeredAt, h.resolveAfter) : at(triggeredAt, h.mitigateAfter),
+          at(triggeredAt, h.resolveAfter),
+          h.ackTimedOut ? at(triggeredAt, 2) : null,
+        ]
       );
+      const {
+        rows: [alert],
+      } = await db.query(
+        `INSERT INTO alerts (organization_id, service_id, public_id, dedup_key, title, severity, source, status, received_at, resolved_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'resolved', $8, $9) RETURNING id`,
+        [
+          org.id,
+          serviceIds[h.service],
+          `alert_${ulid(triggeredAt.getTime())}`,
+          `seed-history-${i + 1}`,
+          h.alert.title,
+          h.alert.severity,
+          h.alert.source,
+          triggeredAt,
+          at(triggeredAt, h.resolveAfter),
+        ]
+      );
+      await db.query(`INSERT INTO incident_alerts (incident_id, alert_id) VALUES ($1, $2)`, [incident.id, alert.id]);
+      await db.query(`INSERT INTO incident_responders (incident_id, user_id, role, joined_at) VALUES ($1, $2, 'commander', $3)`, [
+        incident.id,
+        commander,
+        at(triggeredAt, h.ackAfter),
+      ]);
+      const events: [string, number | null, string, number][] = [
+        ["INCIDENT_CREATED", null, `Incident opened by alert from ${h.alert.source}`, 0],
+        ["NOTIFICATION_SENT", null, "Paged the on-call responder (escalation level 1)", 0],
+        ...(h.ackTimedOut
+          ? ([
+              ["ACK_TIMEOUT", null, "Not acknowledged within 2 minutes — escalated early", 2],
+              ["INCIDENT_ESCALATED", null, "Escalated to level 2", 2],
+            ] as [string, null, string, number][])
+          : []),
+        ["INCIDENT_ACKNOWLEDGED", commander, "Acknowledged", h.ackAfter],
+        ["NOTE_ADDED", commander, h.notes[0].message, h.notes[0].after],
+        ["NOTE_ADDED", commander, h.notes[1].message, h.notes[1].after],
+        ...(h.mitigateAfter !== null
+          ? ([["STATUS_CHANGED", commander, "Mitigated — customer impact stopped", h.mitigateAfter]] as [string, number, string, number][])
+          : []),
+        ["INCIDENT_RESOLVED", commander, `Resolved: ${h.notes[1].message.toLowerCase()}`, h.resolveAfter],
+      ];
+      for (const [type, actor, message, minutes] of events.sort((a, b) => a[3] - b[3])) {
+        await db.query(`INSERT INTO timeline_events (incident_id, event_type, actor_id, message, created_at) VALUES ($1, $2, $3, $4, $5)`, [
+          incident.id,
+          type,
+          actor,
+          message,
+          at(triggeredAt, minutes),
+        ]);
+      }
     }
+    await db.query(`UPDATE organizations SET incident_counter = $2 WHERE id = $1`, [org.id, history.length]);
   });
   console.log("Seeded demo organization 'acme' (log in as alex@acme.test / password123).");
 }

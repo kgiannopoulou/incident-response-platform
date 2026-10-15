@@ -216,3 +216,38 @@ export type EscalationPolicy = {
   services: { id: number; name: string }[];
   updated_at: string;
 };
+
+// GET /metrics?days= — dashboard metrics for a 7/30/90-day window.
+export type MetricAggregates = {
+  incidents: number;
+  sev1: number;
+  still_open: number;
+  ack_timeouts: number;
+  mtta_seconds: number | null;
+  mttr_seconds: number | null;
+  tta_p50_seconds: number | null;
+  ttr_p50_seconds: number | null;
+  ttr_p90_seconds: number | null;
+};
+
+export type DailyIncidents = { date: string; sev1: number; sev2: number; sev3: number; sev4: number };
+
+export type Metrics = {
+  window: { days: 7 | 30 | 90 };
+  summary: MetricAggregates;
+  previous: MetricAggregates;
+  bySeverity: (MetricAggregates & { severity: IncidentSeverity })[];
+  byService: (MetricAggregates & { id: number; name: string; slug: string; status: ServiceStatus; open_incidents: number })[];
+  daily: DailyIncidents[];
+  active: {
+    id: number;
+    number: number;
+    title: string;
+    severity: IncidentSeverity;
+    status: IncidentStatus;
+    triggered_at: string;
+    acknowledged_at: string | null;
+    alert_count: number;
+    service_name: string | null;
+  }[];
+};
