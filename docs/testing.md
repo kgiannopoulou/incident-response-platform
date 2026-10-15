@@ -1,0 +1,117 @@
+# Testing
+
+285 tests across five workspaces. Most of them are **integration tests against a real Postgres and
+Redis**: a test database (`incidents_test`, created and migrated automatically) and separate Redis
+logical databases, so transactions, row locks, triggers, unique indexes and BullMQ behave exactly as
+in production. Nothing about the database is mocked.
+
+```sh
+docker compose up -d        # Postgres 5435, Redis 6380
+npm test                    # everything
+npm run test:coverage       # the same, with a coverage summary per workspace
+npm test -w @irp/api -- business-rules      # one file
+```
+
+| Workspace | Tests | Kind | Statements | Branches | Lines |
+| --- | ---: | --- | ---: | ---: | ---: |
+| `apps/api` | 142 | integration (HTTP via supertest, real DB/Redis) | 91% | 83% | 95% |
+| `apps/worker` | 38 | integration (real BullMQ workers) | 84% | 70% | 86% |
+| `packages/shared` | 81 | unit (pure domain logic) | 92% | 77% | 95% |
+| `packages/alert-sdk` | 17 | unit (fake `fetch`) + 4 end-to-end in `apps/api` | 95% | 86% | 99% |
+| `apps/simulator` | 7 | unit (scenario, CLI parsing, responder script) | 100% | 95% | 100% |
+
+Coverage excludes the process entry points (`apps/api/src/index.ts`, `apps/worker/src/index.ts`) and
+the two simulator CLIs, which wire things together and only run against a live stack — they're
+exercised by `npm run demo:incident` rather than unit tests. CI runs the coverage job on every push
+and uploads the summaries.
+
+## The business rules that matter most
+
+These are the tests the platform's correctness rests on. Each one is written against the public
+interface (HTTP or the job handler), not internals.
+
+### State transitions — `packages/shared/test/state-transitions.test.ts`, `apps/api/test/business-rules.test.ts`
+
+```
+triggered → acknowledged      ✓
+acknowledged → investigating  ✓
+investigating → resolved      ✓
+resolved → investigating      ✗  (409, nothing changes)
+```
+
+- The plan's table, as a parameterized test, both on the pure state machine and **over HTTP** (the
+  forbidden move returns `409 { from, to, allowed: [] }` and the row is untouched).
+- **All 20 (from, to) pairs over HTTP**: exactly the 7 allowed moves succeed.
+- The full 5 × 5 matrix as a readable snapshot, and **2,000 random walks**: never an invalid state,
+  never backwards, resolving always possible, `resolved` absorbing.
+- Already covered since phase 6: the Postgres trigger enforces the same table (`incidents.test.ts`
+  checks API and database agree on all 25 pairs), and concurrent acknowledgements serialize.
+
+### Deduplication — `apps/api/test/business-rules.test.ts`
+
+- **100 alerts with the same key, one after another → 1 incident, 100 attached alerts**,
+  1 `INCIDENT_CREATED` + 99 `ALERT_ATTACHED` timeline events.
+- **The same 100 alerts all at once** → still exactly one `incident_created` decision, 99 `grouped`,
+  one incident, 100 attached alerts — and **one** escalation job, so nobody is paged 100 times.
+- A different key, or the same key after resolution, opens a new incident.
+
+### Worker retries — `apps/worker/test/retries.test.ts`
+
+Real BullMQ workers with the production job options and handlers, wired like `src/index.ts`
+(dead-lettering included); only the backoff delay is shortened.
+
+```
+notification attempt 1 → failure   row stays 'queued', attempts 1
+notification attempt 2 → failure   row stays 'queued', attempts 2
+notification attempt 3 → success   row 'sent', attempts 3, error cleared, one email
+```
+
+- The same for **webhooks** (receiver answers 500, 500, 200 → `sent` after 3 attempts) and **AI
+  drafts** (provider errors twice, then a draft).
+- Every attempt failing → the row is marked `failed`, the job is dead-lettered **once** with its
+  error, attempts and organization.
+- The documented retry policy per queue (5 × 2 s, 5 × 5 s, 3 × 15 s, …).
+
+### Authorization — `apps/api/test/authorization.test.ts`
+
+"Org A cannot read Org B incidents", generalized:
+
+- **Every route that takes an id** (36 of them: incidents, timeline, notes, responders, postmortem,
+  action items, AI drafts, services, API keys, rules, escalation policies, webhooks, deliveries,
+  dead-letter jobs) is called by **an admin of the other organization** with Org A's ids → all `404`
+  (not `403`: another tenant's ids aren't confirmed to exist), no Org A names in any error body, and a
+  before/after snapshot of Org A's tables is identical.
+- Every **list, feed and metric** (16 endpoints) returns none of Org A's data.
+- Incident numbers are per organization: Org B's `INC-1` is its own, and acting on it never touches
+  Org A's `INC-1`.
+- **API keys are tenant-bound**: Org B's key can't alert as an Org A service (`403`) or resolve its
+  alerts.
+- **Roles**: 16 admin-only routes refuse responders (`403`); every session route refuses anonymous
+  requests (`401`).
+- Live updates: `realtime.test.ts` checks that SSE events only reach the organization they belong to.
+
+## What these tests found
+
+Writing tests for the rules above turned up two problems, both fixed in the same commit as the tests:
+
+1. **A deadlock under an alert burst.** With 100 concurrent alerts for one key, Postgres reported
+   deadlocks every run (10 concurrent never triggered it). Every in-flight alert holds a `KEY SHARE`
+   lock on its service row through the `alerts.service_id` foreign key; the transaction that opened
+   the incident held the organization's counter row and then asked for the service row
+   `FOR UPDATE` (to update its status), which conflicts with `KEY SHARE` — while those alert
+   transactions were queued on the counter row. The status update doesn't touch key columns, so the
+   right lock is `FOR NO KEY UPDATE`, which doesn't conflict with foreign-key share locks. Admin edits
+   of services, API keys and policies used the same over-strong lock (they didn't deadlock, but
+   blocked ingestion) and were changed too.
+2. **An inconsistent tenant check.** `GET /services/:id/rules` answered another organization's
+   service id with `200` and an empty list instead of `404`. No data leaked (the query was already
+   tenant-scoped), but it was the only route that didn't treat a foreign id as nonexistent.
+
+## Other suites
+
+Phase by phase, the rest of the suite covers API keys (hashing, rotation, revocation, rate limits),
+correlation and rules, the immutable hash-chained timeline, realtime replay, responders and roles,
+escalation policies and acknowledgement timeouts, notifications and signed webhooks, the dead-letter
+queue, postmortems, AI drafts (redaction, citations, the review gate, the Claude request shape),
+dashboard metrics, the simulator and the SDK (including end to end over HTTP). The README's
+[Testing](../README.md#testing) section lists them.

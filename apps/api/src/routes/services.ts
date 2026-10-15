@@ -93,7 +93,7 @@ export function servicesRouter(deps: Deps) {
     const data = updateServiceSchema.parse(req.body);
     const orgId = req.user!.organizationId;
     const service = await runTx(deps, async (db, fx) => {
-      const { rows } = await db.query(`SELECT * FROM services WHERE id = $1 AND organization_id = $2 FOR UPDATE`, [id, orgId]);
+      const { rows } = await db.query(`SELECT * FROM services WHERE id = $1 AND organization_id = $2 FOR NO KEY UPDATE`, [id, orgId]);
       if (!rows[0]) throw notFound("Service");
       await db.query(
         `UPDATE services SET
@@ -248,11 +248,17 @@ export function servicesRouter(deps: Deps) {
 
   router.get("/:id/rules", async (req, res) => {
     const id = parseId(req.params.id, "Service");
+    // 404 for another organization's service (like every other route),
+    // rather than an empty list.
+    const { rows: service } = await deps.pool.query(`SELECT 1 FROM services WHERE id = $1 AND organization_id = $2`, [
+      id,
+      req.user!.organizationId,
+    ]);
+    if (!service[0]) throw notFound("Service");
     const { rows } = await deps.pool.query(
-      `SELECT r.id, r.position, r.name, r.conditions, r.action, r.incident_severity
-       FROM alert_rules r JOIN services s ON s.id = r.service_id
-       WHERE r.service_id = $1 AND s.organization_id = $2 ORDER BY r.position, r.id`,
-      [id, req.user!.organizationId]
+      `SELECT id, position, name, conditions, action, incident_severity
+       FROM alert_rules WHERE service_id = $1 ORDER BY position, id`,
+      [id]
     );
     res.json({ rules: rows });
   });
@@ -262,7 +268,7 @@ export function servicesRouter(deps: Deps) {
     const id = parseId(req.params.id, "Service");
     const { rules } = z.object({ rules: z.array(alertRuleSchema).max(50) }).parse(req.body);
     await runTx(deps, async (db) => {
-      const { rows } = await db.query(`SELECT 1 FROM services WHERE id = $1 AND organization_id = $2 FOR UPDATE`, [
+      const { rows } = await db.query(`SELECT 1 FROM services WHERE id = $1 AND organization_id = $2 FOR NO KEY UPDATE`, [
         id,
         req.user!.organizationId,
       ]);

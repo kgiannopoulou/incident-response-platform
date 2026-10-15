@@ -131,7 +131,7 @@ export function keyState(k: Pick<ApiKeyRow, "revoked_at" | "expires_at">, now = 
 
 export async function lockApiKey(db: PoolClient, serviceId: number, keyId: number) {
   const { rows } = await db.query<ApiKeyRow>(
-    `SELECT ${KEY_COLUMNS} FROM api_keys WHERE id = $1 AND service_id = $2 FOR UPDATE`,
+    `SELECT ${KEY_COLUMNS} FROM api_keys WHERE id = $1 AND service_id = $2 FOR NO KEY UPDATE`,
     [keyId, serviceId]
   );
   return rows[0] ?? null;

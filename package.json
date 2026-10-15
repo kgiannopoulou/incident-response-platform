@@ -15,10 +15,14 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
+    "test:coverage": "npm run test:coverage --workspaces --if-present",
     "simulate": "npm run simulate -w @irp/simulator",
     "demo:incident": "npm run demo:incident -w @irp/simulator --"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.11"
   }
 }

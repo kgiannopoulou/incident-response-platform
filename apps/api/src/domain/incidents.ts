@@ -100,10 +100,17 @@ async function addResponderRow(db: PoolClient, incidentId: number, userId: numbe
 
 // Service status follows its worst open incident (outage / degraded /
 // operational); maintenance is a manual override.
+//
+// FOR NO KEY UPDATE, not FOR UPDATE: every in-flight alert holds a KEY
+// SHARE lock on its service row (the alerts.service_id foreign key), and
+// FOR UPDATE conflicts with it. Under a burst of alerts the transaction that
+// opened the incident (holding the organization's counter row) would wait on
+// those alerts while they waited on the counter — a deadlock that 100
+// concurrent alerts reproduced every time (business-rules.test.ts).
 export async function recomputeServiceStatus(db: PoolClient, fx: Effects, serviceId: number | null) {
   if (!serviceId) return;
   const { rows } = await db.query<{ status: ServiceStatus; organization_id: number }>(
-    `SELECT status, organization_id FROM services WHERE id = $1 FOR UPDATE`,
+    `SELECT status, organization_id FROM services WHERE id = $1 FOR NO KEY UPDATE`,
     [serviceId]
   );
   if (!rows[0]) return;

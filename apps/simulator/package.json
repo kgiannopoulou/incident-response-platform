@@ -8,7 +8,8 @@
     "simulate": "tsx --conditions=@incident-platform/source src/scenarios.ts",
     "demo:incident": "tsx --conditions=@incident-platform/source src/demo-incident.ts",
     "typecheck": "tsc -p .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage --coverage.include=src --coverage.reporter=text-summary --coverage.reporter=json-summary --coverage.exclude=src/demo-incident.ts --coverage.exclude=src/scenarios.ts"
   },
   "dependencies": {
     "@incident-platform/sdk": "*",

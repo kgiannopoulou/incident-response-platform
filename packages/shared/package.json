@@ -12,7 +12,8 @@
   },
   "scripts": {
     "typecheck": "tsc -p .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage --coverage.include=src --coverage.reporter=text-summary --coverage.reporter=json-summary"
   },
   "dependencies": {
     "zod": "^4.1.0"

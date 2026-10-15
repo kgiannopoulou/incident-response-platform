@@ -132,7 +132,7 @@ export function escalationPoliciesRouter(deps: Deps) {
     const orgId = req.user!.organizationId;
     const policy = await runTx(deps, async (db) => {
       const { rows } = await db.query(
-        `SELECT id FROM escalation_policies WHERE id = $1 AND organization_id = $2 FOR UPDATE`,
+        `SELECT id FROM escalation_policies WHERE id = $1 AND organization_id = $2 FOR NO KEY UPDATE`,
         [id, orgId]
       );
       if (!rows[0]) throw notFound("Escalation policy");

@@ -45,8 +45,15 @@ jobs:
         run: npm run typecheck
       - name: Lint
         run: npm run lint
-      - name: Test (unit + integration)
-        run: npm test
+      - name: Test (unit + integration) with coverage
+        run: npm run test:coverage
+      - name: Upload coverage summaries
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: "*/*/coverage/coverage-summary.json"
+          if-no-files-found: warn
       - name: Build web
         run: npm run build -w @irp/web
       - name: Build and pack the SDK

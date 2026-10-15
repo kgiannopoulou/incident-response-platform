@@ -178,7 +178,7 @@ Monitoring tool / app ──POST /api/v1/alerts──► API key (hashed lookup)
 | [`apps/simulator`](apps/simulator) | `npm run demo:incident` and the smaller `npm run simulate` scenarios, sent over HTTP with the SDK |
 | [`packages/alert-sdk`](packages/alert-sdk) | `@incident-platform/sdk`: the publishable client for applications (alerts, resolves, exceptions, job monitoring) + an example service |
 | [`docker`](docker) | Dockerfile (one build target per app) |
-| [`docs`](docs) | [Architecture & design decisions](docs/architecture.md), [API reference](docs/api.md) |
+| [`docs`](docs) | [Architecture & design decisions](docs/architecture.md), [API reference](docs/api.md), [Testing](docs/testing.md) |
 
 Stack: TypeScript everywhere, Node.js 22, Express 5, PostgreSQL 16 (raw SQL via `pg`),
 Redis 7, BullMQ, Next.js 16 / React 19, Tailwind 4, zod, Vitest, Docker Compose, GitHub Actions.
@@ -381,11 +381,28 @@ The full schema, with comments on every table, is in
 
 ## Testing
 
+**285 tests**, mostly integration tests against a real Postgres and Redis — see
+[docs/testing.md](docs/testing.md) for the strategy, coverage per workspace and what the tests found.
+
 ```sh
-npm test            # all workspaces (needs the docker compose Postgres + Redis running)
+npm test                # all workspaces (needs the docker compose Postgres + Redis running)
+npm run test:coverage   # the same, with coverage (CI runs this and uploads the summaries)
 npm run typecheck
 npm run lint
 ```
+
+The four business rules the plan singles out, each tested through the public interface:
+
+| Rule | Test |
+| --- | --- |
+| `triggered → acknowledged ✓` · `acknowledged → investigating ✓` · `investigating → resolved ✓` · `resolved → investigating ✗` | The table over HTTP (409, row unchanged), all 20 pairs over HTTP, the 5 × 5 matrix, 2,000 random walks |
+| 100 alerts with the same key → **1 incident, 100 attached alerts** | Sequentially *and* all 100 at once (one `incident_created`, 99 `grouped`, one page) |
+| Notification attempt 1 → failure, 2 → failure, **3 → success** | Real BullMQ workers with production job options: email, webhooks and AI drafts; all-fail → dead-lettered once |
+| **Org A cannot read Org B incidents** | 36 id-addressed routes called by Org B's *admin* with Org A's ids → all `404`, Org A unchanged; 16 lists clean; per-tenant incident numbers; tenant-bound API keys; 16 admin-only routes vs responders |
+
+The 100-concurrent-alerts test found a **deadlock** (a `FOR UPDATE` on the service row conflicting with
+foreign-key share locks held by in-flight alerts) that 10 concurrent alerts never triggered — fixed
+with `FOR NO KEY UPDATE`; details in [docs/testing.md](docs/testing.md#what-these-tests-found).
 
 - **Unit** (`packages/shared`, `packages/alert-sdk`): alert payload validation, ULID ids, API key
   generation/hashing, state machine, rule engine, dedup keys, postmortem generator, SDK retries and
@@ -422,6 +439,7 @@ npm run lint
   incidents counted for MTTA but not MTTR, the previous-window comparison, all four severities and
   every service present with zeros, one bucket per UTC day, active incidents ordered worst-first then
   oldest, tenant isolation and the allowed windows.
+- **Phase 20 (testing)**: the four rules above, plus coverage reporting in CI.
 - **Phase 19 (SDK)**: the plan's `alert({ severity, title, deduplicationKey })` call on the wire,
   env-var defaults, client-side validation, retries for 5xx / network errors / timeouts with an
   identical body, `Retry-After`, no retries for 4xx, `onError` modes, exception fingerprints (ids and
