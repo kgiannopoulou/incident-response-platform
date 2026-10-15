@@ -31,6 +31,7 @@ const app = createApp({
   webOrigin: env.webOrigin,
   secureCookies: env.secureCookies,
   trustProxy: env.trustProxy,
+  demo: { enabled: env.demoEnabled },
 });
 
 const server = app.listen(env.port, () => {

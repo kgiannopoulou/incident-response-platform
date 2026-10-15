@@ -170,7 +170,8 @@ Monitoring tool / app ──POST /api/v1/alerts──► API key (hashed lookup)
 | [`apps/web`](apps/web) | Next.js (App Router) + Tailwind dashboard |
 | [`packages/database`](packages/database) | Plain-SQL migrations, migration runner, seed data, pool + transaction helper, test fixtures |
 | [`packages/shared`](packages/shared) | Domain types, zod schemas, state machine, rule engine, dedup, postmortem generator (pure, unit-tested) |
-| [`packages/alert-sdk`](packages/alert-sdk) | Client for sending alerts (with retry/backoff) + the scenario simulator |
+| [`apps/simulator`](apps/simulator) | `npm run demo:incident` and the smaller `npm run simulate` scenarios, sent over HTTP with the SDK |
+| [`packages/alert-sdk`](packages/alert-sdk) | Client for sending alerts (with retry/backoff) |
 | [`docker`](docker) | Dockerfile (one build target per app) |
 | [`docs`](docs) | [Architecture & design decisions](docs/architecture.md), [API reference](docs/api.md) |
 
@@ -244,7 +245,35 @@ Sign in at http://localhost:3000 as **alex@acme.test** / **password123** (admin)
 Or run everything in containers: `docker compose --profile app up --build`
 (migrates and seeds an empty database on first start).
 
-### Play the scenario
+### Simulate a production incident
+
+No real infrastructure needed. Either click **▶ Simulate production incident** on the dashboard (as
+Alex) and watch the steps light up, or run it from a terminal:
+
+```sh
+npm run demo:incident                       # CPU → latency → checkout failures → SEV1 → DB connections (~15 s)
+npm run demo:incident -- --speed 5 --respond  # …and play the responders through to the AI postmortem draft
+```
+
+```
+00:00  WARNING   checkout-api       CPU > 85% on checkout-7f9c                recorded
+00:03  WARNING   checkout-api       Checkout p99 latency 1800ms               INC-64 opened (SEV3)
+00:05  HIGH      checkout-api       Checkout error rate exceeded threshold    INC-65 opened (SEV2)
+00:08  CRITICAL  checkout-api       Checkout error rate exceeded threshold    grouped into INC-65 (SEV1, 2 alerts)
+00:12  CRITICAL  postgres-primary   Connection pool exhausted (500/500)       INC-66 opened (SEV1)
+00:15  CRITICAL  checkout-api       Checkout error rate exceeded threshold    grouped into INC-65 (SEV1, 3 alerts)
+
+— responders (Sam Rivera) —
+00:18  Sam       acknowledges INC-65                                          ok
+00:21  Sam       starts investigating                                         ok
+00:24  Sam       notes "Database connections appear exhausted (500/500)"      ok
+ …
+00:38  monitor   monitoring clears the alerts                                 5 alert(s) cleared
+00:41  Sam       resolves INC-65        already resolved — the service auto-resolves when monitoring clears its alerts
+00:44  Sam       asks for an AI postmortem draft                              draft requested → …/incidents/65/postmortem
+```
+
+More focused scenarios:
 
 ```sh
 npm run simulate                # "checkout is down": 5xx alerts (grouped) + payment timeouts
@@ -365,6 +394,10 @@ npm run lint
   incidents counted for MTTA but not MTTR, the previous-window comparison, all four severities and
   every service present with zeros, one bucket per UTC day, active incidents ordered worst-first then
   oldest, tenant isolation and the allowed windows.
+- **Phase 18 (simulator)**: the dashboard button plays the scenario through the real ingestion
+  pipeline (decisions, grouping, the SEV2 → SEV1 raise, paging job, `metadata.simulated` on every
+  alert, audit entry), one run per organization, admin-only, valid speeds; the CLI's argument
+  parsing, clock and responder script, and that every scenario step is a valid alert payload.
 - **Phase 16 (AI drafts)**: redaction (API keys, tokens, emails and IPs never reach the model), alert
   storms collapsed, long timelines capped head + tail, the prompt fences incident data, hallucinated
   citations are stripped with a warning, refusals / truncation / bad keys fail at once while rate limits

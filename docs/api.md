@@ -185,6 +185,13 @@ MTTA is the mean of `acknowledged_at − triggered_at` over acknowledged inciden
 `daily` has one UTC day per row, zeros included; `active` is every open incident, worst severity
 first, then oldest. Scoped to the caller's organization.
 
+## Simulator
+
+| Method | Path | Body | Notes |
+| --- | --- | --- | --- |
+| GET | `/demo` | — | `{ enabled, scenario: { name, description, steps[{ at, label }] }, run }` — `run` is the organization's current or just-finished simulation: `{ runId, startedBy, speed, step, total, label, done, results[{ label, decision, incident }] }` |
+| POST | `/demo/simulate` | `{ speed?: 1 \| 2 \| 5 }` | Admin. `202`; the scenario's alerts go through ingestion over the next ~15 s (`speed` divides that). `409` while a run is in progress. Progress is pushed as `demo.progress` events on the live stream. `404` when `DEMO_ENABLED=false` |
+
 ## Escalation policies
 
 | Method | Path | Body | Notes |

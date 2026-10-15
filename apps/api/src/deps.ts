@@ -18,4 +18,7 @@ export type Deps = {
   // Express "trust proxy" setting, so req.ip (used for auth-failure rate
   // limiting) is the real client behind a load balancer. Off by default.
   trustProxy?: boolean | number | string;
+  // "Simulate production incident" (routes/demo.ts). timeScale = ms per
+  // scenario second; tests set 0 to play every step at once.
+  demo?: { enabled: boolean; timeScale?: number };
 };

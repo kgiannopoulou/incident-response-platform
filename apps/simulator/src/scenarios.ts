@@ -9,7 +9,7 @@
 //
 // Options via env: IRP_API_URL (default http://localhost:4000),
 // IRP_API_KEY (default: the seeded checkout-api key).
-import { AlertApiError, AlertClient, type TriggerInput } from "./index";
+import { AlertApiError, AlertClient, type TriggerInput } from "@irp/alert-sdk";
 
 const baseUrl = process.env.IRP_API_URL ?? "http://localhost:4000";
 const apiKey = process.env.IRP_API_KEY ?? "ir_live_dev_checkout_api";

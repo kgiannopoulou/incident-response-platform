@@ -5,6 +5,7 @@ import { useState } from "react";
 import { incidentRef, sevLabel, type IncidentSeverity } from "@irp/shared";
 import { AlertFeed } from "@/components/alert-feed";
 import { IncidentsChart, SEVERITY_FILL } from "@/components/dashboard/incidents-chart";
+import { SimulateButton, SimulationProgress } from "@/components/dashboard/simulate-incident";
 import { DeclareIncident } from "@/components/declare-incident";
 import { Button, Card, cx, Empty, ErrorState, Loading, ServiceStatusPill, StatusBadge } from "@/components/ui";
 import { duration } from "@/lib/format";
@@ -93,11 +94,14 @@ export default function DashboardPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold tracking-tight">Incident response</h1>
         <div className="flex flex-wrap items-center gap-2">
+          <SimulateButton />
           <Button variant="danger" onClick={() => setDeclaring(true)}>
             Declare incident
           </Button>
         </div>
       </div>
+
+      <SimulationProgress />
 
       {metrics.error && <ErrorState message={metrics.error} onRetry={metrics.reload} />}
       {!m && !metrics.error && <Loading />}

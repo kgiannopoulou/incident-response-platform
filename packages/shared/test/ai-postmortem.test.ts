@@ -194,6 +194,15 @@ describe("offline rule-based drafter", () => {
     expect(warnings.find((w) => w.message.startsWith("Removed citations"))).toBeUndefined();
   });
 
+  it("takes the cause from the investigation note, not the note describing the fix", () => {
+    const timeline = [
+      ...input().timeline,
+      { id: 16, createdAt: at(20), type: "NOTE_ADDED", actorName: "Sam", message: "Raised the pool limit and recycled connections" },
+    ].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    const output = ruleBasedPostmortemDraft(buildAiContext(input({ timeline })));
+    expect(output.probableRootCause.evidenceEventIds).toEqual([13]);
+  });
+
   it("admits when nothing explains the cause", () => {
     const ctx = buildAiContext(input({ timeline: input().timeline.filter((e) => e.type !== "NOTE_ADDED") }));
     const output = ruleBasedPostmortemDraft(ctx);

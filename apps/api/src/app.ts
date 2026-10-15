@@ -7,6 +7,7 @@ import { errorHandler } from "./lib/http";
 import { adminRouter, liveWorkers } from "./routes/admin";
 import { alertsRouter } from "./routes/alerts";
 import { authRouter } from "./routes/auth";
+import { demoRouter } from "./routes/demo";
 import { escalationPoliciesRouter } from "./routes/escalation-policies";
 import { incidentsRouter } from "./routes/incidents";
 import { metricsRouter } from "./routes/metrics";
@@ -47,6 +48,7 @@ export function createApp(deps: Deps) {
   v1.use("/incidents", incidentsRouter(deps));
   v1.use("/postmortems", postmortemListRouter(deps));
   v1.use("/metrics", metricsRouter(deps));
+  v1.use("/demo", demoRouter(deps));
   v1.use("/services", servicesRouter(deps));
   v1.use("/escalation-policies", escalationPoliciesRouter(deps));
   v1.use("/admin", requireAdmin, adminRouter(deps));

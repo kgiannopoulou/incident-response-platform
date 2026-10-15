@@ -11,3 +11,4 @@ export * from "./jobs";
 export * from "./ids";
 export * from "./escalation";
 export * from "./webhooks";
+export * from "./demo";

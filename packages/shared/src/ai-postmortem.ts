@@ -364,12 +364,16 @@ export function mergeActionItems(existing: ActionItem[], suggested: ActionItem[]
 // rule-based draft in the same shape, so the review workflow can be tried
 // without an account and tests don't depend on a model. It is labelled as
 // "rules" everywhere it appears — it is not AI.
-const CAUSE_HINT = /\b(root cause|caused by|because|due to|exhaust\w*|saturat\w*|leak\w*|misconfig\w*|deploy\w*|regression|expired|disk full|timeouts?|pool)\b/i;
+// Words that describe a cause ("exhausted", "because") beat words that may
+// just as well describe the fix ("pool", "deploy"); the earliest such note
+// wins, since investigation notes come before the fix.
+const CAUSE_WORDS = /\b(root cause|caused by|because|due to|exhaust\w*|saturat\w*|leak\w*|misconfig\w*|regression|expired|disk full)\b/i;
+const CAUSE_HINT = /\b(deploy\w*|timeouts?|pool|lock\w*|memory|cert\w*)\b/i;
 
 export function ruleBasedPostmortemDraft(context: AiPostmortemContext): AiPostmortemOutput {
   const { incident, timeline, alerts } = context;
   const notes = timeline.filter((e) => e.type === "NOTE_ADDED");
-  const causeNote = [...notes].reverse().find((n) => CAUSE_HINT.test(n.message));
+  const causeNote = notes.find((n) => CAUSE_WORDS.test(n.message)) ?? notes.find((n) => CAUSE_HINT.test(n.message));
   const created = timeline.find((e) => e.type === "INCIDENT_CREATED");
   const acked = timeline.find((e) => e.type === "INCIDENT_ACKNOWLEDGED");
   const mitigated = timeline.find((e) => e.type === "STATUS_CHANGED" && /mitigat/i.test(e.message));

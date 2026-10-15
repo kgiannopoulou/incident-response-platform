@@ -567,6 +567,34 @@ definition changes.
 - The demo seed generates 60 days of believable history (deterministic PRNG) so a fresh install's
   dashboard shows trends; the previous 30 days are deliberately slower so the deltas tell a story.
 
+## Simulator
+
+So a reviewer can watch the platform work without real infrastructure, one scenario
+(`packages/shared/src/demo.ts`) is played two ways:
+
+```
+00:00  CPU > 85% on a checkout node     WARNING   recorded, nobody paged
+00:03  checkout p99 latency 1800 ms     WARNING   "latency" rule → SEV3
+00:05  checkout 5xx rate 12%            HIGH      SEV2, Payments team paged
+00:08  checkout 5xx rate 38%            CRITICAL  same dedup key → grouped, raised to SEV1
+00:12  DB connection pool exhausted     CRITICAL  SEV1 on PostgreSQL Primary
+00:15  checkout 5xx rate 41%            CRITICAL  grouped (Alerts: 3)
+```
+
+- **`npm run demo:incident`** (`apps/simulator`) sends the alerts the way monitoring would: real
+  `POST /api/v1/alerts` requests with each service's API key, through the SDK. `--speed 5` compresses
+  time; `--respond` also plays the people over the same REST API the dashboard uses (acknowledge,
+  investigate, notes, mitigate), lets monitoring clear the alerts (auto-resolve), resolves what's left
+  and requests the AI postmortem draft — the whole lifecycle, hands-off.
+- **The dashboard button** (`POST /demo/simulate`, admins) feeds the same steps into `ingestAlert()`
+  in the API process — dedup, rules, incidents, paging, webhooks and realtime all run for real; only
+  the HTTP/API-key hop is skipped. A Redis `SET NX` lock (one run per organization) also holds the
+  progress, so a dashboard opened mid-run shows it; each step publishes a `demo.progress` event.
+  The run lives on timers in one API process — a restart loses the remaining steps, which is
+  acceptable for a demo and documented; `DEMO_ENABLED=false` turns it off.
+- Every simulated alert carries `metadata.simulated = true` and the run id, so nobody mistakes it for a
+  real one, and starting a run is audited.
+
 ## AI-assisted postmortem drafts
 
 Added last, on purpose, and kept on a short leash. The rule the design follows: **AI-generated

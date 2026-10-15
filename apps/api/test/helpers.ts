@@ -40,6 +40,7 @@ export async function createTestContext() {
     jwtSecret: "test-secret",
     webOrigin: "http://localhost:3000",
     secureCookies: false,
+    demo: { enabled: true, timeScale: 0 },
   };
   const app = createApp(deps);
   let fixtures!: Fixtures;

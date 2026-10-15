@@ -15,7 +15,8 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
-    "simulate": "npm run simulate -w @irp/alert-sdk"
+    "simulate": "npm run simulate -w @irp/simulator",
+    "demo:incident": "npm run demo:incident -w @irp/simulator --"
   },
   "engines": {
     "node": ">=20"
