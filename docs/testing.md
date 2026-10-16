@@ -1,23 +1,25 @@
 # Testing
 
-285 tests across five workspaces. Most of them are **integration tests against a real Postgres and
+356 tests across five workspaces. Most of them are **integration tests against a real Postgres and
 Redis**: a test database (`incidents_test`, created and migrated automatically) and separate Redis
 logical databases, so transactions, row locks, triggers, unique indexes and BullMQ behave exactly as
 in production. Nothing about the database is mocked.
 
 ```sh
-docker compose up -d        # Postgres 5435, Redis 6380
+docker compose up -d postgres redis   # Postgres 5435, Redis 6380
 npm test                    # everything
-npm run test:coverage       # the same, with a coverage summary per workspace
+npm run test:unit           # no services needed
+npm run test:integration    # API + worker
+npm run test:coverage       # with a coverage summary per workspace
 npm test -w @irp/api -- business-rules      # one file
 ```
 
 | Workspace | Tests | Kind | Statements | Branches | Lines |
 | --- | ---: | --- | ---: | ---: | ---: |
-| `apps/api` | 142 | integration (HTTP via supertest, real DB/Redis) | 91% | 83% | 95% |
-| `apps/worker` | 38 | integration (real BullMQ workers) | 84% | 70% | 86% |
-| `packages/shared` | 81 | unit (pure domain logic) | 92% | 77% | 95% |
-| `packages/alert-sdk` | 17 | unit (fake `fetch`) + 4 end-to-end in `apps/api` | 95% | 86% | 99% |
+| `apps/api` | 182 | integration (HTTP via supertest, real DB/Redis) | 92% | 83% | 95% |
+| `apps/worker` | 54 | integration (real BullMQ workers, scripted model client) | 86% | 71% | 89% |
+| `packages/shared` | 90 | unit (pure domain logic, investigator engine) | 92% | 73% | 93% |
+| `packages/alert-sdk` | 23 | unit (fake `fetch`, Web Crypto verifier) + end-to-end in `apps/api` | 83% | 80% | 87% |
 | `apps/simulator` | 7 | unit (scenario, CLI parsing, responder script) | 100% | 95% | 100% |
 
 Coverage excludes the process entry points (`apps/api/src/index.ts`, `apps/worker/src/index.ts`) and
@@ -135,6 +137,23 @@ bugs, both fixed: `?serviceId=1 OR 1=1` and an oversized body each produced a `5
 `400`/`413`. The worker suite adds an SSRF test where the URL says `localhost` and only the resolved
 address reveals it is internal; the SDK suite checks its Web Crypto verifier against signatures made
 by the platform's `node:crypto` signer.
+
+## AI Incident Investigator — `packages/shared/test/investigation.test.ts`, `apps/worker/test/investigator.test.ts`, `apps/api/test/investigations.test.ts`
+
+The correlation engine on the demo story (the deploy ranked first with its evidence, Postgres as a
+probable symptom, the unrelated auth deploy last at low confidence), a dependency that failed first
+with nothing changed, a deploy *after* the errors started (contradicted), and no evidence at all
+(says so). Citation validation against the ledger. Against real Postgres: the evidence store sees
+only the incident's organization (another tenant's tempting deployment never appears), groups logs
+into patterns with a baseline, redacts `password=` and emails, escapes `LIKE` wildcards. The Claude
+agent runs against a scripted client, so the tests pin down the exact requests (model, fallback beta,
+strict tool schemas, the fenced brief), that the assistant turn goes back unchanged with one
+`tool_result` per call, that a foreign service name returns nothing, invalid tool input and unknown
+tools come back as tool errors, the tool budget holds, an invented citation is removed with a
+warning, prose instead of `submit_findings` gets one nudge and then fails, and refusals fail without
+retries while transient errors are left to BullMQ. API side: deployment and log ingestion with API
+keys, dependencies (admin, same tenant, not self), one investigation in flight, posting a hypothesis
+as an attributed, unconfirmed note, and tenant isolation.
 
 ## Other suites
 
