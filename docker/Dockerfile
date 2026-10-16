@@ -9,7 +9,7 @@
 # Processes run as the unprivileged `node` user and are started with `node`
 # itself, not through npm, so SIGTERM reaches the app and its graceful
 # shutdown runs (compose adds tini as PID 1 with `init: true`).
-FROM node:22-alpine AS deps
+FROM node:25-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/
