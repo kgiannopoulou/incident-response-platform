@@ -1,3 +1,4 @@
+import { writeFile } from "node:fs/promises";
 import os from "node:os";
 import type { Redis } from "ioredis";
 import { WORKER_HEARTBEAT_PREFIX, WORKER_HEARTBEAT_TTL_SECONDS, type WorkerHeartbeat } from "@irp/shared";
@@ -9,7 +10,10 @@ export class Heartbeat {
   readonly stats: WorkerHeartbeat;
   private timer: NodeJS.Timeout | null = null;
 
-  constructor(private redis: Redis) {
+  constructor(
+    private redis: Redis,
+    private livenessFile: string | null = process.env.WORKER_HEARTBEAT_FILE ?? null
+  ) {
     const now = new Date().toISOString();
     this.stats = { id: `${os.hostname()}:${process.pid}`, startedAt: now, lastSeenAt: now, processed: 0, failed: 0, deadLettered: 0 };
   }
@@ -20,6 +24,9 @@ export class Heartbeat {
 
   async beat() {
     this.stats.lastSeenAt = new Date().toISOString();
+    // Local liveness signal for the container healthcheck (docker/Dockerfile),
+    // written before Redis so it still works during a Redis outage.
+    if (this.livenessFile) await writeFile(this.livenessFile, this.stats.lastSeenAt).catch(() => {});
     await this.redis.set(this.key, JSON.stringify(this.stats), "EX", WORKER_HEARTBEAT_TTL_SECONDS);
   }
 

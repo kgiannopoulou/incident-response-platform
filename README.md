@@ -239,11 +239,38 @@ Details and trade-offs in [docs/architecture.md](docs/architecture.md).
 
 ## Quick start
 
-Prerequisites: Node.js 20+ and Docker.
+**Everything in Docker** (only Docker needed):
+
+```sh
+git clone https://github.com/kgiannopoulou/incident-response-platform.git
+cd incident-response-platform
+cp .env.example .env
+docker compose up -d            # builds and starts web, api, worker, postgres, redis, mailpit;
+                                # migrates and seeds an empty database on first start
+npm run smoke                   # optional: alert → incident → email page → ack → resolve, end to end
+```
+
+```
+┌───────────────────────────┐
+│ web      Next.js   :3000  │   http://localhost:3000
+│ api      Express   :4000  │   http://localhost:4000/health
+│ worker   BullMQ           │
+│ postgres 16        :5435  │
+│ redis    7         :6380  │
+│ mailpit  SMTP/UI   :8025  │   http://localhost:8025 (every page the worker sends)
+└───────────────────────────┘
+```
+
+Every container has a healthcheck (`docker compose ps`), runs as a non-root user behind tini, and
+shuts down gracefully. `docker compose run --rm migrate` re-applies migrations; with Node installed,
+the plan's `npm run db:migrate` / `npm run db:seed` work against the same database too (`db:seed`
+wipes and re-creates the demo data).
+
+**Development with hot reload** (Node.js 20+): run only the infrastructure in Docker.
 
 ```sh
 cp .env.example .env            # then set JWT_SECRET to a long random string
-docker compose up -d            # Postgres (5435), Redis (6380), Mailpit (SMTP 1025, inbox :8025)
+npm run infra:up                # Postgres (5435), Redis (6380), Mailpit (SMTP 1025, inbox :8025)
 npm install
 npm run db:migrate
 npm run db:seed                 # demo org, users, services, escalation policies (wipes data!)
@@ -260,9 +287,6 @@ rule-based drafter, so everything works with no account.
 
 Sign in at http://localhost:3000 as **alex@acme.test** / **password123** (admin);
 `sam@acme.test`, `jordan@acme.test` and `riley@acme.test` are responders. These are local demo accounts only.
-
-Or run everything in containers: `docker compose --profile app up --build`
-(migrates and seeds an empty database on first start).
 
 ### Simulate a production incident
 

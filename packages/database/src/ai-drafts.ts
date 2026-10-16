@@ -18,24 +18,24 @@ export async function loadAiPostmortemContext(db: Db, incidentId: number): Promi
   const incident = rows[0];
   if (!incident) return null;
 
-  const [{ rows: alerts }, { rows: responders }, { rows: timeline }] = await Promise.all([
-    db.query(
-      `SELECT a.public_id, a.received_at, a.severity, a.source, a.title, a.description, a.metadata
-       FROM alerts a JOIN incident_alerts ia ON ia.alert_id = a.id WHERE ia.incident_id = $1 ORDER BY a.received_at`,
-      [incidentId]
-    ),
-    db.query(
-      `SELECT u.name, r.role FROM incident_responders r JOIN users u ON u.id = r.user_id
-       WHERE r.incident_id = $1 ORDER BY r.joined_at`,
-      [incidentId]
-    ),
-    db.query(
-      `SELECT t.id, t.created_at, t.event_type, t.message, u.name AS actor_name
-       FROM timeline_events t LEFT JOIN users u ON u.id = t.actor_id
-       WHERE t.incident_id = $1 ORDER BY t.id`,
-      [incidentId]
-    ),
-  ]);
+  // One query at a time: a pg client (this may run inside a transaction)
+  // executes queries sequentially anyway, and pg@9 drops concurrent queries.
+  const { rows: alerts } = await db.query(
+    `SELECT a.public_id, a.received_at, a.severity, a.source, a.title, a.description, a.metadata
+     FROM alerts a JOIN incident_alerts ia ON ia.alert_id = a.id WHERE ia.incident_id = $1 ORDER BY a.received_at`,
+    [incidentId]
+  );
+  const { rows: responders } = await db.query(
+    `SELECT u.name, r.role FROM incident_responders r JOIN users u ON u.id = r.user_id
+     WHERE r.incident_id = $1 ORDER BY r.joined_at`,
+    [incidentId]
+  );
+  const { rows: timeline } = await db.query(
+    `SELECT t.id, t.created_at, t.event_type, t.message, u.name AS actor_name
+     FROM timeline_events t LEFT JOIN users u ON u.id = t.actor_id
+     WHERE t.incident_id = $1 ORDER BY t.id`,
+    [incidentId]
+  );
 
   return buildAiContext({
     incident: {

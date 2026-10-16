@@ -1,5 +1,48 @@
-# Local infrastructure. Ports are offset from the defaults (5432/6379) so
-# this can run next to other projects' Postgres/Redis containers.
+# The whole platform:
+#
+#   cp .env.example .env
+#   docker compose up -d            # build + start everything, migrate, seed an empty database
+#   open http://localhost:3000      # alex@acme.test / password123
+#
+#   ┌───────────────────────────┐
+#   │ web      Next.js   :3000  │
+#   │ api      Express   :4000  │
+#   │ worker   BullMQ           │
+#   │ postgres 16        :5435  │
+#   │ redis    7         :6380  │
+#   │ mailpit  SMTP/UI   :8025  │
+#   └───────────────────────────┘
+#
+# For development with hot reload, run only the infrastructure and start the
+# apps with npm (see README):  docker compose up -d postgres redis mailpit
+#
+# Host ports are offset from the defaults (5432/6379) so this can run next to
+# other projects' Postgres/Redis containers.
+
+x-app-env: &app-env
+  # In containers the services reach each other by name; these override the
+  # localhost URLs in .env. Everything else in .env (JWT_SECRET,
+  # ANTHROPIC_API_KEY, DEMO_ENABLED, …) is passed through via env_file.
+  NODE_ENV: production
+  DATABASE_URL: postgres://incidents:incidents@postgres:5432/incidents
+  REDIS_URL: redis://redis:6379
+  SMTP_URL: smtp://mailpit:1025
+  WEB_ORIGIN: http://localhost:3000
+  # Dev convenience only: real deployments set a strong JWT_SECRET in .env
+  # (the API refuses known placeholder secrets when DEMO_ENABLED=false).
+  JWT_SECRET: ${JWT_SECRET:-docker-demo-secret-change-me-0123456789abcdef}
+
+x-app: &app
+  init: true # tini as PID 1: forwards signals, reaps zombies
+  restart: unless-stopped
+  env_file:
+    - path: .env
+      required: false
+  environment: *app-env
+  build: &build
+    context: .
+    dockerfile: docker/Dockerfile
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -20,8 +63,13 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    # Append-only file: delayed escalation jobs survive a Redis restart
+    # (Postgres would recover them anyway, but sooner is better).
+    command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "6380:6379"
+    volumes:
+      - redisdata:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -35,28 +83,23 @@ services:
       - "1025:1025" # SMTP
       - "8025:8025" # web inbox
 
-  # --- Full stack in containers: `docker compose --profile app up --build` ---
-  # (For development, run only postgres + redis and start the apps with npm.)
+  # One-shot: applies migrations, then seeds the demo organization if the
+  # database is empty (never wipes existing data). Re-run any time with
+  # `docker compose run --rm migrate`.
   migrate:
-    profiles: ["app"]
-    build: { context: ., dockerfile: docker/Dockerfile, target: api }
+    <<: *app
+    restart: "no"
+    build: { <<: *build, target: api }
+    image: fireline-api:local
+    working_dir: /app
     command: ["sh", "-c", "npm run migrate -w @irp/database && npm run seed -w @irp/database -- --if-empty"]
-    environment: &app-env
-      DATABASE_URL: postgres://incidents:incidents@postgres:5432/incidents
-      REDIS_URL: redis://redis:6379
-      JWT_SECRET: ${JWT_SECRET:-docker-demo-secret-change-me}
-      WEB_ORIGIN: http://localhost:3000
-      SMTP_URL: smtp://mailpit:1025
-      EMAIL_FROM: Fireline <pager@fireline.local>
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      AI_POSTMORTEM_PROVIDER: ${AI_POSTMORTEM_PROVIDER:-auto}
     depends_on:
       postgres: { condition: service_healthy }
 
   api:
-    profiles: ["app"]
-    build: { context: ., dockerfile: docker/Dockerfile, target: api }
-    environment: *app-env
+    <<: *app
+    build: { <<: *build, target: api }
+    image: fireline-api:local
     ports:
       - "4000:4000"
     depends_on:
@@ -64,20 +107,28 @@ services:
       redis: { condition: service_healthy }
 
   worker:
-    profiles: ["app"]
-    build: { context: ., dockerfile: docker/Dockerfile, target: worker }
-    environment: *app-env
+    <<: *app
+    build: { <<: *build, target: worker }
+    image: fireline-worker:local
+    # Long enough for in-flight pages / webhooks / AI drafts to finish.
+    stop_grace_period: 30s
     depends_on:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
 
   web:
-    profiles: ["app"]
-    build: { context: ., dockerfile: docker/Dockerfile, target: web }
+    <<: *app
+    build:
+      <<: *build
+      target: web
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000}
+    image: fireline-web:local
     ports:
       - "3000:3000"
     depends_on:
-      - api
+      api: { condition: service_healthy }
 
 volumes:
   pgdata:
+  redisdata:

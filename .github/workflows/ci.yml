@@ -69,4 +69,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build images
-        run: docker compose --profile app build
+        run: docker compose build

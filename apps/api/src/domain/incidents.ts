@@ -409,23 +409,23 @@ export async function generatePostmortem(
   );
   if (existing.length && onlyIfMissing) return;
 
-  const [{ rows: svc }, { rows: alerts }, { rows: timeline }, { rows: responders }] = await Promise.all([
-    db.query(`SELECT name FROM services WHERE id = $1`, [incident.service_id]),
-    db.query(
-      `SELECT a.title, a.severity, a.source, a.received_at FROM alerts a
-       JOIN incident_alerts ia ON ia.alert_id = a.id WHERE ia.incident_id = $1`,
-      [incident.id]
-    ),
-    db.query(
-      `SELECT t.id, t.hash, t.event_type, t.message, t.created_at, u.name AS actor_name FROM timeline_events t
-       LEFT JOIN users u ON u.id = t.actor_id WHERE t.incident_id = $1 ORDER BY t.id`,
-      [incident.id]
-    ),
-    db.query(
-      `SELECT u.name, r.role FROM incident_responders r JOIN users u ON u.id = r.user_id WHERE r.incident_id = $1`,
-      [incident.id]
-    ),
-  ]);
+  // One query at a time: a pg client (this may run inside a transaction)
+  // executes queries sequentially anyway, and pg@9 drops concurrent queries.
+  const { rows: svc } = await db.query(`SELECT name FROM services WHERE id = $1`, [incident.service_id]);
+  const { rows: alerts } = await db.query(
+    `SELECT a.title, a.severity, a.source, a.received_at FROM alerts a
+     JOIN incident_alerts ia ON ia.alert_id = a.id WHERE ia.incident_id = $1`,
+    [incident.id]
+  );
+  const { rows: timeline } = await db.query(
+    `SELECT t.id, t.hash, t.event_type, t.message, t.created_at, u.name AS actor_name FROM timeline_events t
+     LEFT JOIN users u ON u.id = t.actor_id WHERE t.incident_id = $1 ORDER BY t.id`,
+    [incident.id]
+  );
+  const { rows: responders } = await db.query(
+    `SELECT u.name, r.role FROM incident_responders r JOIN users u ON u.id = r.user_id WHERE r.incident_id = $1`,
+    [incident.id]
+  );
 
   const draft = buildPostmortemDraft({
     incident: {
