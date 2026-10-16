@@ -433,7 +433,7 @@ the session cookie (or a Bearer session token for scripts).
 
 ## Testing
 
-**356 tests**, most of them integration tests against a real Postgres and Redis (no mocks for the
+**357 tests**, most of them integration tests against a real Postgres and Redis (no mocks for the
 database) — strategy, coverage and what they found in [docs/testing.md](docs/testing.md).
 
 ```sh

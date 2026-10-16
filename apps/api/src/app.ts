@@ -47,7 +47,7 @@ export function createApp(deps: Deps) {
   //   postgres down -> 503: alerts can't be accepted (Postgres is the source of truth).
   //   redis down    -> 200 with "degraded": alerts are still accepted and
   //                    paged by the worker's sweeper once Redis is back.
-  app.get("/health", async (_req, res) => {
+  app.get("/health", floodGuard(deps.floodGuardPerMinute ?? 1200), async (_req, res) => {
     const [db, redis, workers] = await Promise.allSettled([
       withTimeout(deps.pool.query("SELECT 1"), 2_000, "postgres"),
       withTimeout(deps.redis.ping(), 1_000, "redis"),
