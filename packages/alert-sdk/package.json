@@ -32,7 +32,8 @@
     "typecheck": "tsc -p .",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage --coverage.include=src --coverage.reporter=text-summary --coverage.reporter=json-summary",
-    "example": "tsx --conditions=@incident-platform/source examples/checkout-service.ts"
+    "example": "tsx --conditions=@incident-platform/source examples/checkout-service.ts",
+    "example:webhooks": "tsx --conditions=@incident-platform/source examples/webhook-receiver.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

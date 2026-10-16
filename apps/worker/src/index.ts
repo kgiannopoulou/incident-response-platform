@@ -29,7 +29,10 @@ const ctx: WorkerContext = {
   drafter: drafterFromEnv(),
   email: createEmailSender(process.env.SMTP_URL || undefined, process.env.EMAIL_FROM ?? "Fireline <pager@fireline.local>"),
   webOrigin: process.env.WEB_ORIGIN ?? "http://localhost:3000",
-  blockPrivateWebhookTargets: process.env.WEBHOOK_BLOCK_PRIVATE_NETWORKS === "true",
+  // On by default in production; .env.example turns it off for local receivers.
+  blockPrivateWebhookTargets: process.env.WEBHOOK_BLOCK_PRIVATE_NETWORKS
+    ? process.env.WEBHOOK_BLOCK_PRIVATE_NETWORKS === "true"
+    : process.env.NODE_ENV === "production",
 };
 const heartbeat = new Heartbeat(ctx.redis);
 logConnection("redis", ctx.redis, "work waits in Postgres; the sweeper re-drives it once Redis is back");

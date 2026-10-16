@@ -5,7 +5,7 @@ import { QUEUES } from "@irp/shared";
 import { logConnection } from "@irp/shared/connection-log";
 import { createApp } from "./app";
 import { env } from "./env";
-import { RateLimiter } from "./lib/rate-limit";
+import { LoginThrottle, RateLimiter } from "./lib/rate-limit";
 import { RealtimeHub } from "./lib/realtime";
 import { closeRedis, withTimeout } from "./lib/resilience";
 
@@ -28,6 +28,7 @@ const reader = redis.duplicate();
 logConnection("redis:reader", reader);
 const hub = new RealtimeHub(subscriber, reader);
 const rateLimiter = new RateLimiter(redis, { authFailuresPerMinute: env.authFailuresPerMinute });
+const loginThrottle = new LoginThrottle(redis);
 
 const app = createApp({
   pool,
@@ -35,6 +36,7 @@ const app = createApp({
   queues,
   hub,
   rateLimiter,
+  loginThrottle,
   jwtSecret: env.jwtSecret,
   webOrigin: env.webOrigin,
   secureCookies: env.secureCookies,

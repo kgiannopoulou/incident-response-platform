@@ -23,7 +23,7 @@ import { assertCanAct, removeResponder, setResponderRole, type RoleActor } from 
 import type { PoolClient } from "@irp/database";
 import { audit } from "../lib/audit";
 import { runTx } from "../lib/effects";
-import { notFound, parseId } from "../lib/http";
+import { notFound, optionalIdQuery, parseId } from "../lib/http";
 
 const actorOf = (req: Request): Actor => ({ id: req.user!.id, name: req.user!.name });
 const numberParam = (req: Request) => parseId(req.params.number, "Incident");
@@ -48,7 +48,7 @@ export function incidentsRouter(deps: Deps) {
   router.get("/", async (req, res) => {
     const status = (req.query.status as string) ?? "open";
     const severity = INCIDENT_SEVERITIES.includes(req.query.severity as never) ? (req.query.severity as string) : null;
-    const serviceId = req.query.serviceId ? Number(req.query.serviceId) : null;
+    const serviceId = optionalIdQuery(req.query.serviceId, "serviceId");
     const { rows } = await deps.pool.query(
       `SELECT i.id, i.number, i.title, i.severity, i.status, i.alert_count, i.last_alert_at, i.escalation_level,
               i.triggered_at, i.acknowledged_at, i.resolved_at,

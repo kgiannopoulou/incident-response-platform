@@ -160,6 +160,12 @@ Monitoring tool / app ──POST /api/v1/alerts──► API key (hashed lookup)
 - **Service health** derived from open incidents (SEV1 → outage, SEV2 → degraded), plus maintenance
   windows that record alerts without paging.
 - **Multi-tenant** (organizations), with `admin` / `responder` roles.
+- **Security** — hashed API keys, per-key / bad-key / login rate limits, RBAC, httpOnly
+  `SameSite=Strict` session cookies, Origin-checked CSRF protection, pinned-algorithm JWTs (and a
+  refusal to run a real install with a weak secret), zod validation, parameterized SQL, tenant
+  isolation, audit log (including sign-ins), signed webhooks with an SDK verifier, an SSRF guard that
+  survives DNS rebinding, security headers, CodeQL, dependency audit and Dependabot. Threat model
+  (STRIDE per trust boundary, residual risks) in [docs/threat-model.md](docs/threat-model.md).
 - **Failure handling** — keeps accepting alerts while Redis is down (pages follow once it's back),
   answers `503` + `Retry-After` instead of hanging while Postgres is down and survives a database
   restart, `Idempotency-Key` on ingestion (the SDK sends one per call, so a retry after a lost
@@ -194,7 +200,7 @@ Monitoring tool / app ──POST /api/v1/alerts──► API key (hashed lookup)
 | [`apps/simulator`](apps/simulator) | `npm run demo:incident` and the smaller `npm run simulate` scenarios, sent over HTTP with the SDK |
 | [`packages/alert-sdk`](packages/alert-sdk) | `@incident-platform/sdk`: the publishable client for applications (alerts, resolves, exceptions, job monitoring) + an example service |
 | [`docker`](docker) | Dockerfile (one build target per app) |
-| [`docs`](docs) | [Architecture & design decisions](docs/architecture.md), [Failure handling](docs/failure-handling.md), [API reference](docs/api.md), [Testing](docs/testing.md) |
+| [`docs`](docs) | [Architecture & design decisions](docs/architecture.md), [Threat model](docs/threat-model.md), [Incident lifecycle](docs/incident-lifecycle.md), [Failure handling](docs/failure-handling.md), [API reference](docs/api.md), [Testing](docs/testing.md) |
 
 Stack: TypeScript everywhere, Node.js 22, Express 5, PostgreSQL 16 (raw SQL via `pg`),
 Redis 7, BullMQ, Next.js 16 / React 19, Tailwind 4, zod, Vitest, Docker Compose, GitHub Actions.

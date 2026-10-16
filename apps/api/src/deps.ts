@@ -1,7 +1,7 @@
 import type { Pool } from "pg";
 import type { Queue } from "bullmq";
 import type { Redis } from "ioredis";
-import type { RateLimiter } from "./lib/rate-limit";
+import type { LoginThrottle, RateLimiter } from "./lib/rate-limit";
 import type { RealtimeHub } from "./lib/realtime";
 
 // Everything the app needs from the outside world, passed in explicitly so
@@ -12,6 +12,7 @@ export type Deps = {
   queues: { notifications: Queue; escalations: Queue; webhooks: Queue; deadLetter: Queue; aiDrafts: Queue };
   hub: RealtimeHub;
   rateLimiter: RateLimiter;
+  loginThrottle: LoginThrottle;
   jwtSecret: string;
   webOrigin: string;
   secureCookies: boolean;

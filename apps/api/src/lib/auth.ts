@@ -19,20 +19,32 @@ declare module "express-serve-static-core" {
   }
 }
 
+// Sessions are HS256 JWTs. Verification pins the algorithm (so a token
+// claiming "alg: none" or another algorithm is refused) and checks issuer and
+// audience, so a token minted for something else with the same secret can't
+// be replayed here.
+const JWT_OPTIONS = { algorithm: "HS256", issuer: "fireline-api", audience: "fireline-web" } as const;
+export const SESSION_TTL_SECONDS = 12 * 60 * 60;
+
 export function signSession(user: SessionUser, secret: string) {
-  return jwt.sign(user, secret, { expiresIn: "12h" });
+  return jwt.sign(user, secret, { ...JWT_OPTIONS, expiresIn: SESSION_TTL_SECONDS });
 }
 
-// Accepts the httpOnly cookie set by /auth/login (browser) or an
-// `Authorization: Bearer <token>` header (curl, scripts).
+// Accepts an `Authorization: Bearer <token>` header (curl, scripts) or the
+// httpOnly cookie set by /auth/login (browser). The header wins when both are
+// present; cookie-authenticated writes are additionally Origin-checked
+// (csrfProtection in security.ts).
 export function requireAuth(secret: string) {
   return (req: Request, _res: Response, next: NextFunction) => {
     const header = req.headers.authorization;
-    const token =
-      req.cookies?.[SESSION_COOKIE] ?? (header?.startsWith("Bearer ") ? header.slice(7) : undefined);
+    const token = (header?.startsWith("Bearer ") ? header.slice(7) : undefined) ?? req.cookies?.[SESSION_COOKIE];
     if (!token) return next(new HttpError(401, "Not signed in"));
     try {
-      const payload = jwt.verify(token, secret) as SessionUser;
+      const payload = jwt.verify(token, secret, {
+        algorithms: [JWT_OPTIONS.algorithm],
+        issuer: JWT_OPTIONS.issuer,
+        audience: JWT_OPTIONS.audience,
+      }) as SessionUser;
       req.user = {
         id: payload.id,
         organizationId: payload.organizationId,

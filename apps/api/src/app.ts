@@ -5,6 +5,7 @@ import type { Deps } from "./deps";
 import { requireAdmin, requireAuth } from "./lib/auth";
 import { errorHandler } from "./lib/http";
 import { withTimeout } from "./lib/resilience";
+import { csrfProtection, noStore, securityHeaders } from "./lib/security";
 import { adminRouter, liveWorkers } from "./routes/admin";
 import { alertsRouter } from "./routes/alerts";
 import { authRouter } from "./routes/auth";
@@ -23,8 +24,13 @@ export function createApp(deps: Deps) {
   const app = express();
   app.disable("x-powered-by");
   if (deps.trustProxy !== undefined) app.set("trust proxy", deps.trustProxy);
-  app.use(cors({ origin: deps.webOrigin, credentials: true }));
+  app.use(securityHeaders({ hsts: deps.secureCookies }));
+  // Only the web app may call the API from a browser with credentials.
+  app.use(cors({ origin: deps.webOrigin, credentials: true, maxAge: 600 }));
   app.use(cookieParser());
+  app.use(csrfProtection(deps.webOrigin));
+  // Bodies are JSON only and small: alerts, notes, policies. A form-encoded
+  // or text/plain body (what a cross-site <form> can send) is never parsed.
   app.use(express.json({ limit: "256kb" }));
 
   // Liveness: the process is up and serving. Container orchestrators restart
@@ -61,6 +67,7 @@ export function createApp(deps: Deps) {
   });
 
   const v1 = express.Router();
+  v1.use(noStore);
   v1.use("/auth", authRouter(deps));
   v1.use("/alerts", alertsRouter(deps)); // ingestion uses integration keys, the feed uses sessions
   v1.use(requireAuth(deps.jwtSecret));

@@ -207,6 +207,21 @@ describe("deliverWebhook", () => {
     expect(["127.0.0.1", "10.1.2.3", "172.20.0.1", "192.168.1.1", "169.254.169.254", "::1", "fd00::1", "::ffff:10.0.0.1"].every(isPrivateAddress)).toBe(true);
     expect(["8.8.8.8", "172.32.0.1", "2606:4700::1111"].some(isPrivateAddress)).toBe(false);
   });
+
+  it("checks the address actually connected to, so a hostname resolving to a private IP is refused (DNS rebinding)", async () => {
+    const id = await openIncident();
+    // "localhost" passes any check on the URL text; only the resolved
+    // address (127.0.0.1 / ::1) reveals it is internal.
+    await addEndpoint(undefined, receiverUrl.replace("127.0.0.1", "localhost"));
+    const [deliveryId] = await fanOut(id);
+    await expect(deliverWebhook({ ...ctx, blockPrivateWebhookTargets: true }, deliveryId, false)).rejects.toThrow(
+      /Refusing to call a private address \(localhost → (127\.0\.0\.1|::1)\)/
+    );
+    expect(received).toHaveLength(0);
+    // Not retried: failed on the first attempt even though it wasn't the last.
+    const { rows } = await pool.query(`SELECT status, attempts FROM webhook_deliveries`);
+    expect(rows[0]).toEqual({ status: "failed", attempts: 1 });
+  });
 });
 
 describe("email pages", () => {

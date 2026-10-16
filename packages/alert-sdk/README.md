@@ -105,6 +105,30 @@ recording the alert twice. Pass `idempotencyKey` yourself (for example your moni
 to make repeats safe across processes too. Even without it, a repeated alert lands in the same
 incident through its deduplication key.
 
+## Verifying webhooks
+
+Fireline signs every outgoing webhook (`Fireline-Signature: t=…,v1=…`, HMAC-SHA256 of
+`timestamp.body`). Verify on the **raw** body, then dedupe on the event `id` (deliveries are
+at-least-once):
+
+```ts
+import { constructWebhookEvent, WebhookSignatureError } from "@incident-platform/sdk";
+
+try {
+  const event = await constructWebhookEvent(process.env.FIRELINE_WEBHOOK_SECRET!, rawBody, req.headers["fireline-signature"]);
+  if (await alreadyProcessed(event.id)) return res.status(200).end();
+  // event.event === "incident.triggered", event.incident.id === "INC-142", …
+} catch (err) {
+  if (err instanceof WebhookSignatureError) return res.status(401).end(); // forged, modified or replayed
+  throw err;
+}
+```
+
+`verifyWebhookSignature()` returns a boolean instead. Signatures older than 5 minutes are rejected
+(`toleranceSeconds`). It uses Web Crypto, so it works on Node, Deno, Bun and edge runtimes, and the
+comparison is constant-time. `npm run example:webhooks -w @incident-platform/sdk` runs
+[a complete receiver](examples/webhook-receiver.ts).
+
 ## Example
 
 [`examples/checkout-service.ts`](examples/checkout-service.ts) is a small HTTP service that reports

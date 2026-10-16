@@ -120,6 +120,22 @@ expiry, and the SDK retrying after a response that was committed but never arriv
 releasing its lease, and a "crashed" worker's lease being respected and then re-driven once.
 See [failure-handling.md](failure-handling.md).
 
+## Security — `apps/api/test/security.test.ts`
+
+The controls in the [threat model](threat-model.md), attacked through the app: security headers and
+`no-store`; CORS only for the web origin; the session cookie's `HttpOnly` / `SameSite=Strict`; CSRF
+(a cookie-authenticated acknowledge from another origin, from no origin, or with a foreign Referer is
+`403` and changes nothing; the web origin works; Bearer clients and API-key ingestion are unaffected;
+login CSRF; a `text/plain` body is never parsed); password guessing (account locked after 10
+failures *even for the right password*, other accounts unaffected, failures audited, identical
+answers for unknown emails); forged tokens (`alg: none`, foreign secret, HS512, wrong audience,
+expired); the weak-secret start-up check; SQL injection payloads stored literally in every alert
+field and hostile query strings answered with `400`/`404`/empty results. Writing them found two
+bugs, both fixed: `?serviceId=1 OR 1=1` and an oversized body each produced a `500` instead of a
+`400`/`413`. The worker suite adds an SSRF test where the URL says `localhost` and only the resolved
+address reveals it is internal; the SDK suite checks its Web Crypto verifier against signatures made
+by the platform's `node:crypto` signer.
+
 ## Other suites
 
 Phase by phase, the rest of the suite covers API keys (hashing, rotation, revocation, rate limits),

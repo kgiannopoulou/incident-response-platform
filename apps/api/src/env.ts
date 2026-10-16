@@ -1,5 +1,6 @@
 // Importing @irp/database loads the root .env first.
 import { databaseUrl } from "@irp/database";
+import { checkJwtSecret } from "./lib/security";
 
 function required(name: string) {
   const value = process.env[name];
@@ -8,6 +9,7 @@ function required(name: string) {
 }
 
 export const env = {
+  production: process.env.NODE_ENV === "production",
   port: Number(process.env.API_PORT ?? 4000),
   databaseUrl: databaseUrl(),
   redisUrl: required("REDIS_URL"),
@@ -26,3 +28,14 @@ export const env = {
       : process.env.TRUST_PROXY
     : undefined,
 };
+
+// Fail fast on a guessable session secret (see checkJwtSecret).
+const secretCheck = checkJwtSecret(env.jwtSecret, { demo: env.demoEnabled });
+if (!secretCheck.ok) {
+  console.error(`FATAL: ${secretCheck.error}`);
+  process.exit(1);
+}
+if (secretCheck.warning) console.warn(`WARNING: ${secretCheck.warning}`);
+if (env.production && !env.secureCookies && !env.demoEnabled) {
+  console.warn("WARNING: COOKIE_SECURE is false in production; serve the API over HTTPS and set COOKIE_SECURE=true.");
+}

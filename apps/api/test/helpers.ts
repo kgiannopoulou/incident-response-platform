@@ -5,7 +5,7 @@ import { resetFixtures, setupTestDatabase, TEST_PASSWORD, type Fixtures } from "
 import { QUEUES } from "@irp/shared";
 import { createApp } from "../src/app";
 import type { Deps } from "../src/deps";
-import { RateLimiter } from "../src/lib/rate-limit";
+import { LoginThrottle, RateLimiter } from "../src/lib/rate-limit";
 import { RealtimeHub } from "../src/lib/realtime";
 
 // Tests use Redis logical database 1 so they never touch a dev worker's queues.
@@ -37,6 +37,7 @@ export async function createTestContext() {
     queues,
     hub,
     rateLimiter: new RateLimiter(redis, { authFailuresPerMinute: 20 }),
+    loginThrottle: new LoginThrottle(redis),
     jwtSecret: "test-secret",
     webOrigin: "http://localhost:3000",
     secureCookies: false,

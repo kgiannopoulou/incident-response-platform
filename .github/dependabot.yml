@@ -1,0 +1,17 @@
+# Weekly dependency updates: npm packages (grouped so minor/patch bumps
+# arrive as one PR), GitHub Actions, and the Docker base images.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+  - package-ecosystem: docker
+    directory: /docker
+    schedule: { interval: weekly }

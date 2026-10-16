@@ -1,5 +1,7 @@
-import { lookup } from "node:dns/promises";
+import { lookup, type LookupAddress } from "node:dns";
 import { isIP } from "node:net";
+import { UnrecoverableError } from "bullmq";
+import { Agent, fetch as undiciFetch } from "undici";
 import { WEBHOOK_DELIVERY_HEADER, WEBHOOK_EVENT_HEADER, WEBHOOK_SIGNATURE_HEADER } from "@irp/shared";
 import { signWebhook } from "@irp/shared/crypto";
 import type { WorkerContext } from "./context";
@@ -20,10 +22,35 @@ export function isPrivateAddress(ip: string) {
   return v6 === "::1" || v6 === "::" || v6.startsWith("fc") || v6.startsWith("fd") || v6.startsWith("fe80");
 }
 
-async function assertPublicTarget(url: URL) {
+// SSRF guard (WEBHOOK_BLOCK_PRIVATE_NETWORKS). The check runs inside the
+// HTTP client's own DNS lookup, on the addresses it is about to connect to —
+// not in a separate lookup beforehand. A separate check is open to DNS
+// rebinding: the attacker's name resolves to a public IP for the check and to
+// 169.254.169.254 a moment later for the real connection. Literal IP hosts
+// are checked up front (no lookup happens for them). Redirects are never
+// followed, so a 302 to an internal URL can't bypass this either.
+export class PrivateAddressError extends Error {}
+
+function guardedLookup(
+  hostname: string,
+  options: object,
+  callback: (err: NodeJS.ErrnoException | null, address: string | LookupAddress[], family?: number) => void
+) {
+  lookup(hostname, { ...options, all: true }, (err, addresses: LookupAddress[]) => {
+    if (err) return callback(err, []);
+    const blocked = addresses.find((a) => isPrivateAddress(a.address));
+    if (blocked) return callback(new PrivateAddressError(`Refusing to call a private address (${hostname} → ${blocked.address})`), []);
+    const all = (options as { all?: boolean }).all;
+    if (all) return callback(null, addresses);
+    callback(null, addresses[0].address, addresses[0].family);
+  });
+}
+
+const publicOnlyAgent = new Agent({ connect: { lookup: guardedLookup } });
+
+function assertPublicLiteral(url: URL) {
   const host = url.hostname.replace(/^\[|\]$/g, "");
-  const addresses = isIP(host) ? [host] : (await lookup(host, { all: true })).map((a) => a.address);
-  if (addresses.some(isPrivateAddress)) throw new Error(`Refusing to call a private address (${url.hostname})`);
+  if (isIP(host) && isPrivateAddress(host)) throw new PrivateAddressError(`Refusing to call a private address (${url.hostname})`);
 }
 
 class PermanentWebhookError extends Error {}
@@ -55,8 +82,9 @@ export async function deliverWebhook(ctx: WorkerContext, deliveryId: number, isF
   let status: number | null = null;
   try {
     const url = new URL(d.url);
-    if (ctx.blockPrivateWebhookTargets) await assertPublicTarget(url);
-    const res = await fetch(url, {
+    if (ctx.blockPrivateWebhookTargets) assertPublicLiteral(url);
+    const res = await undiciFetch(url, {
+      dispatcher: ctx.blockPrivateWebhookTargets ? publicOnlyAgent : undefined,
       method: "POST",
       redirect: "manual", // a redirect to an internal address must not bypass the check above
       signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -75,11 +103,13 @@ export async function deliverWebhook(ctx: WorkerContext, deliveryId: number, isF
     if (status < 200 || status >= 300) throw new Error(`Receiver answered HTTP ${status}`);
   } catch (err) {
     const permanent = err instanceof PermanentWebhookError;
+    const blocked = err instanceof PrivateAddressError || (err as { cause?: unknown }).cause instanceof PrivateAddressError;
     // fetch reports network failures as "fetch failed" with the reason in `cause`.
     const reason = (err as { cause?: { code?: string; message?: string } }).cause;
     const cause = reason?.code ?? reason?.message;
-    const message =
-      (err as Error).name === "TimeoutError"
+    const message = blocked
+      ? (err instanceof PrivateAddressError ? err : ((err as { cause: Error }).cause as Error)).message
+      : (err as Error).name === "TimeoutError"
         ? `Timed out after ${TIMEOUT_MS / 1000}s`
         : `${(err as Error).message}${cause ? ` (${cause})` : ""}`;
     await ctx.pool.query(
@@ -87,7 +117,7 @@ export async function deliverWebhook(ctx: WorkerContext, deliveryId: number, isF
               delivering_until = NULL,
               status = CASE WHEN $5 THEN 'failed' ELSE status END
        WHERE id = $1`,
-      [deliveryId, message, status, Date.now() - started, isFinalAttempt || permanent]
+      [deliveryId, message, status, Date.now() - started, isFinalAttempt || permanent || blocked]
     );
     if (permanent) {
       await ctx.pool.query(`UPDATE webhook_endpoints SET enabled = false, disabled_reason = $2 WHERE id = $1`, [
@@ -96,6 +126,9 @@ export async function deliverWebhook(ctx: WorkerContext, deliveryId: number, isF
       ]);
       return "disabled" as const; // don't retry
     }
+    // A blocked address won't become public by retrying: fail now (BullMQ
+    // skips the remaining attempts and the job is dead-lettered for review).
+    if (blocked) throw new UnrecoverableError(message);
     throw new Error(message);
   }
 

@@ -2,7 +2,8 @@ import bcrypt from "bcryptjs";
 import { Router } from "express";
 import { loginSchema } from "@irp/shared";
 import type { Deps } from "../deps";
-import { requireAuth, SESSION_COOKIE, signSession, type SessionUser } from "../lib/auth";
+import { audit } from "../lib/audit";
+import { requireAuth, SESSION_COOKIE, SESSION_TTL_SECONDS, signSession, type SessionUser } from "../lib/auth";
 import { HttpError } from "../lib/http";
 
 export function authRouter(deps: Deps) {
@@ -10,6 +11,12 @@ export function authRouter(deps: Deps) {
 
   router.post("/login", async (req, res) => {
     const { email, password } = loginSchema.parse(req.body);
+    const ip = req.ip ?? "unknown";
+    const lockedFor = await deps.loginThrottle.lockedFor(ip, email);
+    if (lockedFor > 0) {
+      res.setHeader("Retry-After", String(lockedFor));
+      throw new HttpError(429, "Too many failed sign-in attempts; try again later");
+    }
     const { rows } = await deps.pool.query(
       `SELECT u.id, u.name, u.email, u.password_hash, m.organization_id, m.role, o.name AS organization_name
        FROM users u
@@ -23,8 +30,30 @@ export function authRouter(deps: Deps) {
     // Same message for "no such user" and "wrong password", so the endpoint
     // can't be used to discover which emails have accounts.
     if (!row || !(await bcrypt.compare(password, row.password_hash))) {
+      await deps.loginThrottle.recordFailure(ip, email);
+      // Failed sign-ins to a real account are security events for its
+      // organization's audit log (unknown emails have no organization).
+      if (row) {
+        await audit(deps.pool, {
+          organizationId: row.organization_id,
+          actorUserId: null,
+          action: "auth.login_failed",
+          entityType: "user",
+          entityId: row.id,
+          details: { ip, userAgent: req.get("user-agent")?.slice(0, 200) ?? null },
+        });
+      }
       throw new HttpError(401, "Invalid email or password");
     }
+    await deps.loginThrottle.recordSuccess(ip, email);
+    await audit(deps.pool, {
+      organizationId: row.organization_id,
+      actorUserId: row.id,
+      action: "auth.login",
+      entityType: "user",
+      entityId: row.id,
+      details: { ip, userAgent: req.get("user-agent")?.slice(0, 200) ?? null },
+    });
 
     const user: SessionUser = {
       id: row.id,
@@ -34,11 +63,14 @@ export function authRouter(deps: Deps) {
       email: row.email,
     };
     const token = signSession(user, deps.jwtSecret);
+    // httpOnly: scripts (an XSS) can't read it. SameSite=Strict: browsers
+    // don't attach it to requests started by other sites. Secure behind HTTPS.
     res.cookie(SESSION_COOKIE, token, {
       httpOnly: true,
-      sameSite: "lax",
+      sameSite: "strict",
       secure: deps.secureCookies,
-      maxAge: 12 * 60 * 60 * 1000,
+      path: "/",
+      maxAge: SESSION_TTL_SECONDS * 1000,
     });
     // The token is also returned for API clients (curl, scripts) that use
     // `Authorization: Bearer`; the browser relies on the httpOnly cookie.
@@ -46,7 +78,7 @@ export function authRouter(deps: Deps) {
   });
 
   router.post("/logout", (_req, res) => {
-    res.clearCookie(SESSION_COOKIE);
+    res.clearCookie(SESSION_COOKIE, { httpOnly: true, sameSite: "strict", secure: deps.secureCookies, path: "/" });
     res.status(204).end();
   });
 

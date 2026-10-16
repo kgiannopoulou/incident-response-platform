@@ -7,7 +7,10 @@ name: CI
 #         ├── unit ─────────── shared domain logic, SDK, simulator (no services)
 #         ├── integration ──── API + worker against real Postgres 16 and Redis 7, with coverage
 #         ├── build ────────── Next.js production build, SDK compiled + packed + smoke-imported
-#         └── docker ───────── build all images, `docker compose up --wait`, end-to-end smoke test
+#         ├── docker ───────── build all images, `docker compose up --wait`, end-to-end smoke test
+#         └── audit ────────── no known high/critical vulnerabilities in production dependencies
+#
+# CodeQL (codeql.yml) and Dependabot (dependabot.yml) cover static analysis and updates.
 #
 # release.yml reuses this workflow before publishing images for a version tag.
 
@@ -34,6 +37,17 @@ jobs:
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: npm run lint
+
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      # Production dependencies only: what ships in the images. Dev tooling
+      # (linters, test runners) is reviewed through Dependabot instead.
+      - run: npm audit --omit=dev --audit-level=high
 
   typecheck:
     runs-on: ubuntu-latest

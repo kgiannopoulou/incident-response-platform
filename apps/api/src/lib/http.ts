@@ -22,6 +22,17 @@ export function parseId(value: string | string[] | undefined, what = "Resource")
   return id;
 }
 
+// An optional numeric filter from the query string (?serviceId=3). Anything
+// that isn't a positive integer is a 400 — never passed on to SQL.
+export function optionalIdQuery(value: unknown, name: string) {
+  if (value === undefined || value === "") return null;
+  const id = Number(value);
+  if (typeof value !== "string" || !/^\d+$/.test(value) || !Number.isSafeInteger(id) || id <= 0) {
+    throw new HttpError(400, `${name} must be a positive integer`);
+  }
+  return id;
+}
+
 export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction) {
   if (err instanceof ZodError) {
     return res.status(400).json({ error: "Invalid request", details: z.flattenError(err) });
@@ -37,6 +48,11 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
   if ((err as { code?: string })?.code === "23514") {
     return res.status(409).json({ error: (err as Error).message });
   }
+  // A value Postgres couldn't parse for its column type (safety net behind
+  // input validation): the client's fault, and no details are echoed.
+  if ((err as { code?: string })?.code === "22P02") {
+    return res.status(400).json({ error: "Invalid parameter" });
+  }
   // Postgres unique violation that a handler didn't anticipate.
   if ((err as { code?: string })?.code === "23505") {
     return res.status(409).json({ error: "Conflicts with an existing record" });
@@ -48,6 +64,10 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
     console.error(`[degraded] database unavailable: ${(err as Error).message}`);
     res.setHeader("Retry-After", "5");
     return res.status(503).json({ error: "Database unavailable; retry shortly", retryable: true });
+  }
+  // Body over the 256 kB limit (was a 500 before Phase 24's tests).
+  if ((err as { type?: string })?.type === "entity.too.large") {
+    return res.status(413).json({ error: "Request body too large" });
   }
   // Malformed JSON body.
   if ((err as { type?: string })?.type === "entity.parse.failed") {

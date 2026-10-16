@@ -5,7 +5,7 @@ import type { Deps } from "../deps";
 import { ingestAlert } from "../domain/ingestion";
 import { authenticateApiKey, type AuthenticatedKey } from "../lib/api-keys";
 import { requireAuth } from "../lib/auth";
-import { HttpError } from "../lib/http";
+import { HttpError, optionalIdQuery } from "../lib/http";
 
 declare module "express-serve-static-core" {
   interface Request {
@@ -88,7 +88,7 @@ export function alertsRouter(deps: Deps) {
 
   // Alert feed for the dashboard (session auth), newest first.
   router.get("/", requireAuth(deps.jwtSecret), async (req, res) => {
-    const serviceId = req.query.serviceId ? Number(req.query.serviceId) : null;
+    const serviceId = optionalIdQuery(req.query.serviceId, "serviceId");
     const severity = ALERT_SEVERITIES.includes(req.query.severity as never) ? (req.query.severity as string) : null;
     const status = ALERT_STATUSES.includes(req.query.status as never) ? (req.query.status as string) : null;
     const { rows } = await deps.pool.query(
