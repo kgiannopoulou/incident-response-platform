@@ -26,6 +26,7 @@ export async function createTestContext() {
     webhooks: new Queue(QUEUES.webhooks, { connection }),
     deadLetter: new Queue(QUEUES.deadLetter, { connection }),
     aiDrafts: new Queue(QUEUES.aiDrafts, { connection }),
+    investigations: new Queue(QUEUES.investigations, { connection }),
   };
   const hub = new RealtimeHub(
     new Redis(redisUrl, { maxRetriesPerRequest: null }),

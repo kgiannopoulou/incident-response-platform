@@ -12,10 +12,12 @@ import { authRouter } from "./routes/auth";
 import { demoRouter } from "./routes/demo";
 import { escalationPoliciesRouter } from "./routes/escalation-policies";
 import { incidentsRouter } from "./routes/incidents";
+import { investigationsRouter } from "./routes/investigations";
 import { metricsRouter } from "./routes/metrics";
 import { orgRouter } from "./routes/org";
 import { postmortemListRouter, postmortemRouter } from "./routes/postmortems";
 import { servicesRouter } from "./routes/services";
+import { deploymentsRouter, logsRouter } from "./routes/telemetry";
 import { webhooksRouter } from "./routes/webhooks";
 
 // Builds the Express app from injected dependencies (see deps.ts), so tests
@@ -70,8 +72,11 @@ export function createApp(deps: Deps) {
   v1.use(noStore);
   v1.use("/auth", authRouter(deps));
   v1.use("/alerts", alertsRouter(deps)); // ingestion uses integration keys, the feed uses sessions
+  v1.use("/deployments", deploymentsRouter(deps)); // same: CI/CD reports with keys, the list uses sessions
+  v1.use("/logs", logsRouter(deps));
   v1.use(requireAuth(deps.jwtSecret));
   v1.use("/incidents/:number/postmortem", postmortemRouter(deps));
+  v1.use("/incidents/:number/investigations", investigationsRouter(deps));
   v1.use("/incidents", incidentsRouter(deps));
   v1.use("/postmortems", postmortemListRouter(deps));
   v1.use("/metrics", metricsRouter(deps));

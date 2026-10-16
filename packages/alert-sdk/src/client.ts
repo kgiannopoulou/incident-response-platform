@@ -3,6 +3,10 @@ import type {
   AlertInput,
   AlertResult,
   CaptureOptions,
+  DeploymentInput,
+  DeploymentResult,
+  LogEntry,
+  LogsResult,
   ErrorMode,
   IncidentClientOptions,
   MonitorOptions,
@@ -10,7 +14,7 @@ import type {
   Severity,
 } from "./types.js";
 
-export const SDK_VERSION = "0.3.0";
+export const SDK_VERSION = "0.4.0";
 
 const SEVERITIES: readonly Severity[] = ["critical", "high", "warning", "info"];
 
@@ -59,11 +63,12 @@ const newIdempotencyKey = () => `sdk-${globalThis.crypto.randomUUID()}`;
 // platform replays that response instead of recording the alert twice.
 // With onError "throw" (the default) calls resolve to the result; with "log"
 // or a handler they may resolve to null instead of rejecting.
-export type ClientResult<M extends ErrorMode> = M extends "throw" ? AlertResult : AlertResult | null;
+export type Result<M extends ErrorMode, T> = M extends "throw" ? T : T | null;
+export type ClientResult<M extends ErrorMode> = Result<M, AlertResult>;
 
 export class IncidentClient<M extends ErrorMode = "throw"> {
   private readonly apiKey: string;
-  private readonly url: string;
+  private readonly baseUrl: string;
   private readonly options: Required<Omit<IncidentClientOptions, "apiKey" | "baseUrl" | "defaultMetadata">> & {
     defaultMetadata: Record<string, unknown>;
   };
@@ -73,7 +78,7 @@ export class IncidentClient<M extends ErrorMode = "throw"> {
     if (!apiKey) throw new IncidentClientError("An API key is required: pass { apiKey } or set INCIDENT_API_KEY");
     this.apiKey = apiKey;
     const baseUrl = options.baseUrl ?? env("INCIDENT_API_URL") ?? "http://localhost:4000";
-    this.url = `${baseUrl.replace(/\/+$/, "")}/api/v1/alerts`;
+    this.baseUrl = baseUrl.replace(/\/+$/, "");
     this.options = {
       source: options.source ?? "sdk",
       defaultMetadata: options.defaultMetadata ?? {},
@@ -148,19 +153,52 @@ export class IncidentClient<M extends ErrorMode = "throw"> {
     }
   }
 
-  private async send(payload: Record<string, unknown>, idempotencyKey?: string): Promise<ClientResult<M>> {
+  // Report a deployment or other change (config push, migration, feature
+  // flag, rollback) from CI/CD. The incident investigator correlates changes
+  // with the alerts and errors that follow them.
+  //
+  //   await incidents.deployment({ version: "v2.14.0", commitSha: process.env.GIT_SHA, description: "Raise worker concurrency" });
+  deployment(input: DeploymentInput): Promise<Result<M, DeploymentResult>> {
+    if (!input.version?.trim()) return Promise.reject(new IncidentClientError("version is required"));
+    const startedAt = input.startedAt instanceof Date ? input.startedAt.toISOString() : input.startedAt;
+    const finishedAt = input.finishedAt instanceof Date ? input.finishedAt.toISOString() : input.finishedAt;
+    return this.request<DeploymentResult>("/api/v1/deployments", { ...input, startedAt, finishedAt }, newIdempotencyKey(), "deployment");
+  }
+
+  // Ship application log lines (warnings and errors are what matter) so an
+  // investigation can spot new error patterns. Batches of up to 500 entries
+  // per request; larger arrays are split.
+  async logs(entries: LogEntry[]): Promise<Result<M, LogsResult>> {
+    if (!entries.length) return { accepted: 0, service: null } as LogsResult;
+    let accepted = 0;
+    let service: string | null = null;
+    for (let i = 0; i < entries.length; i += 500) {
+      const batch = entries.slice(i, i + 500).map((e) => ({ ...e, timestamp: e.timestamp instanceof Date ? e.timestamp.toISOString() : e.timestamp }));
+      const result = await this.request<LogsResult>("/api/v1/logs", { entries: batch }, newIdempotencyKey(), "logs");
+      if (!result) return null as Result<M, LogsResult>;
+      accepted += result.accepted;
+      service = result.service;
+    }
+    return { accepted, service };
+  }
+
+  private send(payload: Record<string, unknown>, idempotencyKey?: string): Promise<ClientResult<M>> {
+    return this.request<AlertResult>("/api/v1/alerts", payload, idempotencyKey ?? newIdempotencyKey(), "alert");
+  }
+
+  private async request<T>(path: string, payload: Record<string, unknown>, idempotencyKey: string, what: string): Promise<Result<M, T>> {
     try {
-      return (await this.sendWithRetries(payload, idempotencyKey ?? newIdempotencyKey())) as ClientResult<M>;
+      return (await this.sendWithRetries<T>(path, payload, idempotencyKey)) as Result<M, T>;
     } catch (err) {
       const mode = this.options.onError;
       if (mode === "throw" || err instanceof IncidentClientError) throw err;
-      if (mode === "log") console.error(`[incident-platform] alert not delivered: ${(err as Error).message}`);
+      if (mode === "log") console.error(`[incident-platform] ${what} not delivered: ${(err as Error).message}`);
       else mode(err);
-      return null as ClientResult<M>;
+      return null as Result<M, T>;
     }
   }
 
-  private async sendWithRetries(payload: Record<string, unknown>, idempotencyKey: string): Promise<AlertResult> {
+  private async sendWithRetries<T>(path: string, payload: Record<string, unknown>, idempotencyKey: string): Promise<T> {
     const { maxRetries, baseDelayMs, maxRetryAfterMs, timeoutMs } = this.options;
     const body = JSON.stringify(payload);
     let lastError: IncidentApiError | undefined;
@@ -172,7 +210,7 @@ export class IncidentClient<M extends ErrorMode = "throw"> {
       }
       let res: Response;
       try {
-        res = await this.options.fetch(this.url, {
+        res = await this.options.fetch(`${this.baseUrl}${path}`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -189,7 +227,7 @@ export class IncidentClient<M extends ErrorMode = "throw"> {
         lastError = new IncidentApiError(0, timedOut ? `Timed out after ${timeoutMs} ms` : `Network error: ${(err as Error).message}`);
         continue;
       }
-      if (res.ok) return (await res.json()) as AlertResult;
+      if (res.ok) return (await res.json()) as T;
 
       const errorBody = (await res.json().catch(() => ({}))) as { error?: string };
       const retryAfter = Number(res.headers.get("retry-after"));

@@ -39,12 +39,13 @@ export function planResponse(opened: Map<string, number>, alertsEndAt: number): 
   if (checkout) {
     api(3, `acknowledges INC-${checkout}`, checkout, "POST", "/acknowledge");
     api(6, "starts investigating", checkout, "POST", "/status", { status: "investigating" });
+    api(7, "runs the incident investigator", checkout, "POST", "/investigations");
     api(9, 'notes "Database connections appear exhausted (500/500)"', checkout, "POST", "/notes", {
       message: "Database connections appear exhausted (500/500) — checkout requests time out waiting for a connection",
     });
     if (database) api(11, `links INC-${database}: same root cause`, database, "POST", "/notes", { message: `Same root cause as INC-${checkout}` });
-    api(15, 'notes "Raised the pool limit, recycled stale connections"', checkout, "POST", "/notes", {
-      message: "Raised the checkout DB pool limit and recycled stale connections from the leaking worker",
+    api(15, 'notes "Rolled back checkout-api to v2.13.4"', checkout, "POST", "/notes", {
+      message: "Rolled back checkout-api to v2.13.4 (worker concurrency back to 8 per pod); database connections draining",
     });
     api(18, "marks it mitigated", checkout, "POST", "/status", { status: "mitigated", message: "Error rate back under 1%" });
   }
@@ -60,7 +61,7 @@ export function planResponse(opened: Map<string, number>, alertsEndAt: number): 
     ],
   });
   for (const number of [checkout, latency, database]) {
-    if (number) api(26, `resolves INC-${number}`, number, "POST", "/status", { status: "resolved", message: "Connection pool fixed; error rate normal" });
+    if (number) api(26, `resolves INC-${number}`, number, "POST", "/status", { status: "resolved", message: "v2.14.0 rolled back; connections and error rate normal" });
   }
   if (checkout) api(29, "asks for an AI postmortem draft", checkout, "POST", "/postmortem/ai-drafts", undefined, "draft");
   return steps;

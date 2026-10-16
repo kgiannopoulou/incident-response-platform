@@ -227,6 +227,85 @@ acknowledged within it gets its next step paged immediately. Incidents expose th
 }
 ```
 
+## Deployments and logs *(API key — evidence for the investigator)*
+
+Sent with the service's API key, like alerts (same authentication, per-key rate limit, `403` when a
+body names another service).
+
+### `POST /deployments` — report a change
+
+```json
+{
+  "version": "v2.14.0",
+  "commitSha": "e41f9b2",
+  "description": "Raise checkout worker concurrency 8 → 32 per pod",
+  "author": "Jordan Lee",
+  "kind": "deploy",
+  "status": "succeeded",
+  "startedAt": "2026-10-16T13:54:00Z",
+  "url": "https://ci.example.com/runs/8812"
+}
+```
+
+`kind`: `deploy` (default) · `config` · `rollback` · `migration` · `feature_flag`; `status`:
+`succeeded` (default) · `in_progress` · `failed` · `rolled_back`; `environment` defaults to
+`production`; `startedAt` to now. → `201 { id: "deploy_12", service, version, status, kind, startedAt, finishedAt }`.
+
+`GET /deployments?serviceId=` *(session)* — the organization's last 100 changes.
+
+### `POST /logs` — ship log lines
+
+```json
+{ "entries": [{ "level": "error", "message": "timeout acquiring connection from pool after 5000ms", "timestamp": "2026-10-16T13:59:02Z", "attributes": { "pod": "checkout-7f9c" } }] }
+```
+
+1–500 entries per request (body ≤ 256 kB); `level`: `debug` · `info` · `warn` (or `warning`) ·
+`error` · `fatal` (or `critical`); `timestamp` defaults to now and is clamped to now if in the future.
+Each message is stored with a fingerprint (numbers, ids, quoted values and IPs masked) that groups
+repeats into patterns. → `202 { accepted, service }`.
+
+## Service dependencies
+
+- `GET /services/:id/dependencies` → `{ dependsOn: [...], dependents: [...] }`
+- `PUT /services/:id/dependencies` *(admin)* `{ "dependsOn": [3, 4] }` — replaces the list; same-organization
+  services only (`404` otherwise), not itself (`400`). Audited.
+
+## Investigations *(session)*
+
+- `POST /incidents/:number/investigations` → `202 { investigation: { id, status: "queued" } }`; the
+  worker runs it. `409` while one is already queued/running for the incident.
+- `GET /incidents/:number/investigations` → the last 5, newest first:
+
+```json
+{
+  "id": 7, "status": "completed", "provider": "claude", "model": "claude-opus-5-5",
+  "findings": {
+    "summary": "Most likely: Deploy v2.14.0 of Checkout API triggered the failure (high confidence). …",
+    "hypotheses": [
+      {
+        "id": "h1", "title": "Deploy v2.14.0 of Checkout API triggered the failure",
+        "statement": "…", "category": "deployment", "confidence": "high",
+        "supportingEvidence": ["deploy:3", "log:21", "alert:alert_01M51…"], "contradictingEvidence": [],
+        "reasoning": "v2.14.0 was deployed at 08:13, 6 min before the first alert …",
+        "nextChecks": ["Diff v2.14.0 against v2.13.4 (commit e41f9b2) …", "Roll back …"]
+      }
+    ],
+    "timeline": [{ "at": "2026-10-16T08:13:13.000Z", "kind": "deployment", "title": "…", "evidenceIds": ["deploy:3"] }],
+    "openQuestions": ["No deployments were reported for postgres-primary in the window — …"]
+  },
+  "evidence": { "deploy:3": { "id": "deploy:3", "kind": "deployment", "at": "…", "service": "checkout-api", "summary": "Deploy v2.14.0 (from v2.13.4): …" } },
+  "steps": [{ "tool": "list_deployments", "input": { "service": "checkout-api" }, "results": 2, "ms": 14 }],
+  "warnings": [], "usage": { "requests": 4, "inputTokens": 21000, "outputTokens": 2400 },
+  "error": null, "created_at": "…", "started_at": "…", "completed_at": "…", "requested_by_name": "Sam Rivera"
+}
+```
+
+- `POST /incidents/:number/investigations/:id/hypotheses/:hid/post` → `201`: adds the hypothesis to
+  the timeline as the caller's `NOTE_ADDED` event (metadata: investigation, hypothesis and evidence
+  ids, `unconfirmed: true`). Observers can't.
+
+Live: `investigation.updated { incidentId, number, investigationId, status }` on the SSE stream.
+
 ## Organization
 
 | Method | Path | Notes |

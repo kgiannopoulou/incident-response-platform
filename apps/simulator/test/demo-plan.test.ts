@@ -54,9 +54,10 @@ describe("demo CLI", () => {
     expect(plan.map((s) => s.label)).toEqual([
       "acknowledges INC-65",
       "starts investigating",
+      "runs the incident investigator",
       'notes "Database connections appear exhausted (500/500)"',
       "links INC-66: same root cause",
-      'notes "Raised the pool limit, recycled stale connections"',
+      'notes "Rolled back checkout-api to v2.13.4"',
       "marks it mitigated",
       "monitoring clears the alerts",
       "resolves INC-65",

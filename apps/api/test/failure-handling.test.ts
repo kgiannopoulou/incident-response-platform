@@ -45,7 +45,7 @@ function appWithoutRedis() {
   const redis = deadRedis();
   const connection = { url: DEAD_REDIS, retryStrategy: () => 200 };
   const queues = Object.fromEntries(
-    (["notifications", "escalations", "webhooks", "deadLetter", "aiDrafts"] as const).map((name) => {
+    (["notifications", "escalations", "webhooks", "deadLetter", "aiDrafts", "investigations"] as const).map((name) => {
       const q = new Queue(QUEUES[name], { connection });
       q.on("error", () => {});
       return [name, q];

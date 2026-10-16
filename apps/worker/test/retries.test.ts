@@ -1,3 +1,4 @@
+import { rulesInvestigator } from "../src/investigator/investigators";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { Queue, Worker, type Job } from "bullmq";
@@ -69,7 +70,9 @@ beforeAll(async () => {
     webhooksQueue: new Queue(QUEUES.webhooks, { connection }),
     deadLetterQueue: new Queue(QUEUES.deadLetter, { connection }),
     aiDraftsQueue: new Queue(QUEUES.aiDrafts, { connection }),
+    investigationsQueue: new Queue(QUEUES.investigations, { connection }),
     drafter: rulesDrafter,
+    investigator: rulesInvestigator,
     email: scriptedEmail,
     webOrigin: "http://fireline.test",
     blockPrivateWebhookTargets: false,
@@ -135,7 +138,7 @@ describe("worker retries", () => {
     expect(deliverJobOptions(1)).toMatchObject({ attempts: 5, backoff: { type: "exponential", delay: 2000 } });
     expect(webhookJobOptions(1)).toMatchObject({ attempts: 5, backoff: { type: "exponential", delay: 5000 } });
     expect(aiDraftJobOptions(1)).toMatchObject({ attempts: 3, backoff: { type: "exponential", delay: 15_000 } });
-    expect(Object.keys(RETRY_POLICY).sort()).toEqual(["ai-drafts", "escalations", "notifications", "webhooks"]);
+    expect(Object.keys(RETRY_POLICY).sort()).toEqual(["ai-drafts", "escalations", "investigations", "notifications", "webhooks"]);
   });
 
   it("page: attempt 1 → failure, attempt 2 → failure, attempt 3 → success", async () => {

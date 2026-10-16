@@ -1,4 +1,4 @@
-import { aiDraftJobOptions, deliverJobOptions, webhookJobOptions } from "@irp/shared";
+import { aiDraftJobOptions, deliverJobOptions, investigationJobOptions, webhookJobOptions } from "@irp/shared";
 import type { WorkerContext } from "./context";
 import { handleAckTimeout } from "./ack-timeout";
 import { escalateIncident } from "./escalation";
@@ -80,7 +80,21 @@ export async function sweep(ctx: WorkerContext) {
             completed_at = now()
      WHERE status = 'generating' AND started_at < now() - interval '10 minutes'`
   );
+  // Investigations, same rules as AI drafts.
+  const { rows: stuckInvestigations } = await ctx.pool.query<{ id: number }>(
+    `SELECT id FROM incident_investigations WHERE status = 'queued' AND created_at < now() - interval '60 seconds'
+     ORDER BY id LIMIT 50`
+  );
+  for (const { id } of stuckInvestigations) {
+    await ctx.investigationsQueue.add("investigate", { investigationId: id }, investigationJobOptions(id));
+  }
+  await ctx.pool.query(
+    `UPDATE incident_investigations SET status = 'failed', error = 'The worker stopped during this investigation; run it again',
+            completed_at = now()
+     WHERE status = 'running' AND started_at < now() - interval '10 minutes'`
+  );
+
   // Idempotency keys of alert ingestion are only honoured for 24 hours.
   await ctx.pool.query(`DELETE FROM alert_idempotency_keys WHERE created_at < now() - interval '24 hours'`);
-  return { escalated, ackTimeouts, requeued: stuck.length + stuckHooks.length + stuckDrafts.length };
+  return { escalated, ackTimeouts, requeued: stuck.length + stuckHooks.length + stuckDrafts.length + stuckInvestigations.length };
 }

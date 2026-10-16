@@ -49,7 +49,7 @@ describe("queue overview", () => {
     expect((await api().get("/api/v1/admin/queues").set(await t.as("sam"))).status).toBe(403);
     const res = await api().get("/api/v1/admin/queues").set(await t.as("alex"));
     expect(res.status).toBe(200);
-    expect(res.body.queues.map((q: { name: string }) => q.name)).toEqual(["notifications", "escalations", "webhooks", "ai-drafts", "dead-letter"]);
+    expect(res.body.queues.map((q: { name: string }) => q.name)).toEqual(["notifications", "escalations", "webhooks", "ai-drafts", "investigations", "dead-letter"]);
     // The new incident's "incident-created" job is waiting for a worker.
     const escalations = res.body.queues.find((q: { name: string }) => q.name === "escalations");
     expect(escalations.counts.waiting).toBe(1);

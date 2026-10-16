@@ -13,6 +13,7 @@ import { deliverNotification } from "../src/delivery";
 import { escalateIncident } from "../src/escalation";
 import { deliverWebhook, isPrivateAddress } from "../src/webhooks";
 import { rulesDrafter } from "../src/ai-drafter";
+import { rulesInvestigator } from "../src/investigator/investigators";
 
 // A local receiver standing in for the customer's webhook endpoint. Each
 // test decides what it answers.
@@ -50,7 +51,9 @@ beforeAll(async () => {
     webhooksQueue: new Queue(QUEUES.webhooks, { connection }),
     deadLetterQueue: new Queue(QUEUES.deadLetter, { connection }),
     aiDraftsQueue: new Queue(QUEUES.aiDrafts, { connection }),
+    investigationsQueue: new Queue(QUEUES.investigations, { connection }),
     drafter: rulesDrafter,
+    investigator: rulesInvestigator,
     email: async (message) => {
       emails.push(message);
       return { messageId: "<abc@mailpit>" };

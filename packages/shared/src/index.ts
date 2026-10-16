@@ -12,3 +12,4 @@ export * from "./ids";
 export * from "./escalation";
 export * from "./webhooks";
 export * from "./demo";
+export * from "./investigation";

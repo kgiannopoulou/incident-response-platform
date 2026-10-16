@@ -11,6 +11,7 @@ import { Heartbeat } from "../src/heartbeat";
 import { escalateIncident } from "../src/escalation";
 import { sweep } from "../src/sweeper";
 import { rulesDrafter } from "../src/ai-drafter";
+import { rulesInvestigator } from "../src/investigator/investigators";
 
 let pool: Pool;
 let ctx: WorkerContext;
@@ -36,7 +37,9 @@ beforeAll(async () => {
     webhooksQueue: new Queue(QUEUES.webhooks, { connection }),
     deadLetterQueue: new Queue(QUEUES.deadLetter, { connection }),
     aiDraftsQueue: new Queue(QUEUES.aiDrafts, { connection }),
+    investigationsQueue: new Queue(QUEUES.investigations, { connection }),
     drafter: rulesDrafter,
+    investigator: rulesInvestigator,
     email,
     webOrigin: "http://fireline.test",
     blockPrivateWebhookTargets: false,

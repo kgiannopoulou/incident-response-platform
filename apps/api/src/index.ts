@@ -22,6 +22,7 @@ const queues = {
   webhooks: new Queue(QUEUES.webhooks, { connection }),
   deadLetter: new Queue(QUEUES.deadLetter, { connection }),
   aiDrafts: new Queue(QUEUES.aiDrafts, { connection }),
+  investigations: new Queue(QUEUES.investigations, { connection }),
 };
 for (const queue of Object.values(queues)) logConnection(`queue:${queue.name}`, queue);
 const reader = redis.duplicate();

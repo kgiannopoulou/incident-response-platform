@@ -2,7 +2,7 @@ import { Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import { createPool, isDatabaseUnavailable } from "@irp/database";
 import { logConnection } from "@irp/shared/connection-log";
-import { QUEUES, type AiDraftJob, type DeliverNotificationJob, type DeliverWebhookJob, type EscalateIncidentJob } from "@irp/shared";
+import { QUEUES, type InvestigateJob, type AiDraftJob, type DeliverNotificationJob, type DeliverWebhookJob, type EscalateIncidentJob } from "@irp/shared";
 import { handleAckTimeout } from "./ack-timeout";
 import { drafterFromEnv } from "./ai-drafter";
 import { generateAiDraft } from "./ai-drafts";
@@ -11,6 +11,8 @@ import { handleFailures } from "./dead-letter";
 import { deliverNotification } from "./delivery";
 import { escalateIncident } from "./escalation";
 import { Heartbeat } from "./heartbeat";
+import { investigatorFromEnv } from "./investigator/investigators";
+import { runInvestigation } from "./investigator/run";
 import { sweep } from "./sweeper";
 import { deliverWebhook } from "./webhooks";
 
@@ -26,7 +28,9 @@ const ctx: WorkerContext = {
   webhooksQueue: new Queue(QUEUES.webhooks, { connection }),
   deadLetterQueue: new Queue(QUEUES.deadLetter, { connection }),
   aiDraftsQueue: new Queue(QUEUES.aiDrafts, { connection }),
+  investigationsQueue: new Queue(QUEUES.investigations, { connection }),
   drafter: drafterFromEnv(),
+  investigator: investigatorFromEnv(),
   email: createEmailSender(process.env.SMTP_URL || undefined, process.env.EMAIL_FROM ?? "Fireline <pager@fireline.local>"),
   webOrigin: process.env.WEB_ORIGIN ?? "http://localhost:3000",
   // On by default in production; .env.example turns it off for local receivers.
@@ -36,7 +40,7 @@ const ctx: WorkerContext = {
 };
 const heartbeat = new Heartbeat(ctx.redis);
 logConnection("redis", ctx.redis, "work waits in Postgres; the sweeper re-drives it once Redis is back");
-for (const queue of [ctx.notificationsQueue, ctx.escalationsQueue, ctx.webhooksQueue, ctx.deadLetterQueue, ctx.aiDraftsQueue]) {
+for (const queue of [ctx.notificationsQueue, ctx.escalationsQueue, ctx.webhooksQueue, ctx.deadLetterQueue, ctx.aiDraftsQueue, ctx.investigationsQueue]) {
   logConnection(`queue:${queue.name}`, queue);
 }
 
@@ -72,11 +76,19 @@ const aiDrafts = new Worker<AiDraftJob>(
   { connection, concurrency: 2 }
 );
 
-for (const worker of [notifications, escalations, webhooks, aiDrafts]) logConnection(`worker:${worker.name}`, worker);
+// Investigations: an agent making several model calls; a couple at a time.
+const investigations = new Worker<InvestigateJob>(
+  QUEUES.investigations,
+  async (job) => runInvestigation(ctx, job.data.investigationId, job.attemptsMade + 1 >= (job.opts.attempts ?? 1)),
+  { connection, concurrency: 2 }
+);
+
+for (const worker of [notifications, escalations, webhooks, aiDrafts, investigations]) logConnection(`worker:${worker.name}`, worker);
 handleFailures(ctx, QUEUES.notifications, notifications, heartbeat.stats);
 handleFailures(ctx, QUEUES.escalations, escalations, heartbeat.stats);
 handleFailures(ctx, QUEUES.webhooks, webhooks, heartbeat.stats);
 handleFailures(ctx, QUEUES.aiDrafts, aiDrafts, heartbeat.stats);
+handleFailures(ctx, QUEUES.investigations, investigations, heartbeat.stats);
 
 // The recovery sweep runs on a plain timer, not as a BullMQ repeatable job:
 // it exists to recover from losing Redis state, so it must not live in
@@ -99,7 +111,7 @@ const sweepTimer = setInterval(async () => {
 }, 10_000);
 heartbeat.start();
 console.log(
-  `Worker ${heartbeat.stats.id} started: notifications, escalations, webhooks, ai-drafts (${ctx.drafter.provider}${ctx.drafter.model ? ` ${ctx.drafter.model}` : ""}) queues; sweeping every 10s.`
+  `Worker ${heartbeat.stats.id} started: notifications, escalations, webhooks, ai-drafts (${ctx.drafter.provider}${ctx.drafter.model ? ` ${ctx.drafter.model}` : ""}), investigations (${ctx.investigator.provider}${ctx.investigator.model ? ` ${ctx.investigator.model}` : ""}) queues; sweeping every 10s.`
 );
 
 // Graceful shutdown: let in-flight jobs finish (Worker.close waits for
@@ -118,9 +130,9 @@ async function shutdown() {
     process.exit(1);
   }, 25_000).unref();
   clearInterval(sweepTimer);
-  await Promise.all([notifications.close(), escalations.close(), webhooks.close(), aiDrafts.close()]);
+  await Promise.all([notifications.close(), escalations.close(), webhooks.close(), aiDrafts.close(), investigations.close()]);
   await heartbeat.stop();
-  await Promise.all([ctx.notificationsQueue.close(), ctx.escalationsQueue.close(), ctx.webhooksQueue.close(), ctx.deadLetterQueue.close(), ctx.aiDraftsQueue.close()]);
+  await Promise.all([ctx.notificationsQueue.close(), ctx.escalationsQueue.close(), ctx.webhooksQueue.close(), ctx.deadLetterQueue.close(), ctx.aiDraftsQueue.close(), ctx.investigationsQueue.close()]);
   await ctx.redis.quit();
   await ctx.pool.end();
   process.exit(0);

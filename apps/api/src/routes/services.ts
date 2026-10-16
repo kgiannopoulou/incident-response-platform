@@ -5,6 +5,7 @@ import {
   createApiKeySchema,
   createServiceSchema,
   rotateApiKeySchema,
+  serviceDependenciesSchema,
   slugify,
   updateServiceSchema,
 } from "@irp/shared";
@@ -288,6 +289,57 @@ export function servicesRouter(deps: Deps) {
         entityType: "service",
         entityId: id,
         details: { count: rules.length },
+      });
+    });
+    res.json({ ok: true });
+  });
+
+  // What a service depends on (and what depends on it). The incident
+  // investigator looks upstream along these edges.
+  router.get("/:id/dependencies", async (req, res) => {
+    const id = parseId(req.params.id, "Service");
+    const { rows: service } = await deps.pool.query(`SELECT 1 FROM services WHERE id = $1 AND organization_id = $2`, [
+      id,
+      req.user!.organizationId,
+    ]);
+    if (!service[0]) throw notFound("Service");
+    const { rows } = await deps.pool.query(
+      `SELECT 'dependsOn' AS direction, s.id, s.name, s.slug, s.status FROM service_dependencies d JOIN services s ON s.id = d.depends_on_service_id
+       WHERE d.service_id = $1
+       UNION ALL
+       SELECT 'dependents', s.id, s.name, s.slug, s.status FROM service_dependencies d JOIN services s ON s.id = d.service_id
+       WHERE d.depends_on_service_id = $1
+       ORDER BY 1, 3`,
+      [id]
+    );
+    const pick = (direction: string) => rows.filter((r) => r.direction === direction).map(({ direction: _d, ...s }) => s);
+    res.json({ dependsOn: pick("dependsOn"), dependents: pick("dependents") });
+  });
+
+  // Replaces the list of services this one depends on.
+  router.put("/:id/dependencies", requireAdmin, async (req, res) => {
+    const id = parseId(req.params.id, "Service");
+    const { dependsOn } = serviceDependenciesSchema.parse(req.body);
+    const unique = [...new Set(dependsOn)];
+    if (unique.includes(id)) throw new HttpError(400, "A service can't depend on itself");
+    await runTx(deps, async (db) => {
+      const orgId = req.user!.organizationId;
+      const { rows } = await db.query(`SELECT 1 FROM services WHERE id = $1 AND organization_id = $2 FOR NO KEY UPDATE`, [id, orgId]);
+      if (!rows[0]) throw notFound("Service");
+      // Same-organization targets only (a foreign id looks like a missing one).
+      const { rows: found } = await db.query<{ id: number }>(`SELECT id FROM services WHERE id = ANY($1) AND organization_id = $2`, [unique, orgId]);
+      if (found.length !== unique.length) throw notFound("Service");
+      await db.query(`DELETE FROM service_dependencies WHERE service_id = $1`, [id]);
+      if (unique.length) {
+        await db.query(`INSERT INTO service_dependencies (service_id, depends_on_service_id) SELECT $1, unnest($2::int[])`, [id, unique]);
+      }
+      await audit(db, {
+        organizationId: orgId,
+        actorUserId: req.user!.id,
+        action: "service.dependencies",
+        entityType: "service",
+        entityId: id,
+        details: { dependsOn: unique },
       });
     });
     res.json({ ok: true });

@@ -2,6 +2,7 @@ import { Router } from "express";
 import type { Job } from "bullmq";
 import {
   aiDraftJobOptions,
+  investigationJobOptions,
   deliverJobOptions,
   escalateJobOptions,
   QUEUES,
@@ -63,7 +64,7 @@ export function adminRouter(deps: Deps) {
   router.get("/queues", async (_req, res) => {
     const states = ["waiting", "active", "delayed", "failed", "completed", "paused"] as const;
     const queues = await redisCall(Promise.all(
-      [deps.queues.notifications, deps.queues.escalations, deps.queues.webhooks, deps.queues.aiDrafts, deps.queues.deadLetter].map(async (q) => ({
+      [deps.queues.notifications, deps.queues.escalations, deps.queues.webhooks, deps.queues.aiDrafts, deps.queues.investigations, deps.queues.deadLetter].map(async (q) => ({
         name: q.name,
         counts: await q.getJobCounts(...states),
       }))
@@ -106,6 +107,15 @@ export function adminRouter(deps: Deps) {
       );
       if (!rowCount) throw new HttpError(409, "That webhook delivery is no longer failed");
       await deps.queues.webhooks.add("deliver-webhook", { deliveryId }, webhookJobOptions(deliveryId));
+    } else if (queue === QUEUES.investigations) {
+      const investigationId = Number(data.investigationId);
+      const { rowCount } = await deps.pool.query(
+        `UPDATE incident_investigations SET status = 'queued', error = NULL, completed_at = NULL
+         WHERE id = $1 AND organization_id = $2 AND status = 'failed'`,
+        [investigationId, orgId]
+      );
+      if (!rowCount) throw new HttpError(409, "That investigation is no longer failed");
+      await deps.queues.investigations.add("investigate", { investigationId }, investigationJobOptions(investigationId));
     } else if (queue === QUEUES.aiDrafts) {
       const draftId = Number(data.draftId);
       const { rowCount } = await deps.pool.query(

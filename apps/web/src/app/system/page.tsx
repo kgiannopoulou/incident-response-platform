@@ -26,6 +26,7 @@ const QUEUE_HELP: Record<string, string> = {
   escalations: "incident-created + delayed escalation steps",
   webhooks: "Signed incident events — 5 attempts, 5 s → 40 s",
   "ai-drafts": "AI postmortem drafts — 3 attempts, 15 s → 30 s",
+  investigations: "Incident investigations (agent or rules) — 3 attempts, 15 s → 30 s",
   "dead-letter": "Jobs that used up every retry, kept for review",
 };
 

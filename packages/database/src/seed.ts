@@ -13,7 +13,7 @@
 //   postgres-primary   ir_live_dev_postgres_primary
 //   iot-gateway        ir_live_dev_iot_gateway
 import bcrypt from "bcryptjs";
-import { ulid } from "@irp/shared";
+import { DEMO_DEPENDENCIES, ulid } from "@irp/shared";
 import { apiKeyDisplayPrefix, hashApiKey } from "@irp/shared/crypto";
 import { createPool, withTransaction } from "./index";
 import { incidentHistory } from "./seed-history";
@@ -156,6 +156,12 @@ async function main() {
     );
     const postgres = await service("PostgreSQL Primary", "postgres-primary", "Primary OLTP database", platform, platformPolicy, "ir_live_dev_postgres_primary");
     const iot = await service("IoT Gateway", "iot-gateway", "MQTT ingestion from store sensors", platform, platformPolicy, "ir_live_dev_iot_gateway");
+
+    // Who calls whom: the incident investigator looks upstream along these.
+    const serviceBySlug: Record<string, number> = { "checkout-api": checkout, "auth-service": auth, "postgres-primary": postgres, "iot-gateway": iot };
+    for (const [from, to] of DEMO_DEPENDENCIES) {
+      await db.query(`INSERT INTO service_dependencies (service_id, depends_on_service_id) VALUES ($1, $2)`, [serviceBySlug[from], serviceBySlug[to]]);
+    }
 
     // Matching rules for the checkout service, to show rule evaluation.
     await db.query(

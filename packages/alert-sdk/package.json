@@ -1,6 +1,6 @@
 {
   "name": "@incident-platform/sdk",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Send alerts to the incident platform from any Node.js (18+) application: alerts, resolves, exceptions and job monitoring, with retries.",
   "license": "MIT",
   "type": "module",

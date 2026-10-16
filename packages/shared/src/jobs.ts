@@ -15,6 +15,7 @@
 //                                     an operator to inspect, retry or discard
 //
 //   API ── "Generate AI draft" ──► ai-drafts: "draft-postmortem" { draftId }
+//   API ── "Investigate" ─────────► investigations: "investigate" { investigationId }
 //                                          worker calls the model; 3 attempts, then dead-lettered
 
 export const QUEUES = {
@@ -23,16 +24,18 @@ export const QUEUES = {
   webhooks: "webhooks",
   deadLetter: "dead-letter",
   aiDrafts: "ai-drafts",
+  investigations: "investigations",
 } as const;
 
 // Queues whose failed jobs are dead-lettered (everything except the DLQ itself).
-export const WORK_QUEUES = [QUEUES.notifications, QUEUES.escalations, QUEUES.webhooks, QUEUES.aiDrafts] as const;
+export const WORK_QUEUES = [QUEUES.notifications, QUEUES.escalations, QUEUES.webhooks, QUEUES.aiDrafts, QUEUES.investigations] as const;
 export type WorkQueue = (typeof WORK_QUEUES)[number];
 
 export type DeliverNotificationJob = { notificationId: number };
 export type EscalateIncidentJob = { incidentId: number };
 export type DeliverWebhookJob = { deliveryId: number };
 export type AiDraftJob = { draftId: number };
+export type InvestigateJob = { investigationId: number };
 
 // A job that used up every retry. Stored as the payload of a job in the
 // dead-letter queue (which no worker consumes), so the original data and
@@ -59,6 +62,8 @@ export const RETRY_POLICY: Record<WorkQueue, { attempts: number; backoff: { type
   escalations: { attempts: 5, backoff: { type: "exponential", delay: 1000 } },
   webhooks: { attempts: 5, backoff: { type: "exponential", delay: 5000 } },
   "ai-drafts": { attempts: 3, backoff: { type: "exponential", delay: 15_000 } },
+  // Same reasoning as AI drafts: the agent's model calls retry short blips themselves.
+  investigations: { attempts: 3, backoff: { type: "exponential", delay: 15_000 } },
 };
 
 // Backoff before retry number `attempt` (1-based), as BullMQ computes it.
@@ -129,3 +134,9 @@ export type WorkerHeartbeat = {
   failed: number;
   deadLettered: number;
 };
+
+export const investigationJobId = (investigationId: number) => `investigation-${investigationId}`;
+
+export function investigationJobOptions(investigationId: number) {
+  return { jobId: investigationJobId(investigationId), ...RETRY_POLICY.investigations, removeOnComplete: true, removeOnFail: true };
+}

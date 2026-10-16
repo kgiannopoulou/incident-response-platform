@@ -82,3 +82,37 @@ export type IncidentClientOptions = {
   onError?: ErrorMode;
   fetch?: typeof fetch;
 };
+
+export type DeploymentInput = {
+  version: string; // "v2.14.0", a tag, a build number
+  commitSha?: string; // 7-40 hex characters
+  description?: string; // what changed — the investigator reads this
+  author?: string;
+  environment?: string; // default "production"
+  status?: "in_progress" | "succeeded" | "failed" | "rolled_back"; // default "succeeded"
+  kind?: "deploy" | "config" | "rollback" | "migration" | "feature_flag"; // default "deploy"
+  url?: string; // link to the pipeline run / release
+  startedAt?: string | Date; // default now
+  finishedAt?: string | Date;
+  metadata?: Record<string, unknown>;
+  service?: string; // optional: the API key decides the service
+};
+
+export type DeploymentResult = {
+  id: string; // "deploy_12"
+  service: string;
+  version: string;
+  status: string;
+  kind: string;
+  startedAt: string;
+  finishedAt: string | null;
+};
+
+export type LogEntry = {
+  level: "debug" | "info" | "warn" | "warning" | "error" | "fatal" | "critical";
+  message: string;
+  timestamp?: string | Date; // default now
+  attributes?: Record<string, unknown>;
+};
+
+export type LogsResult = { accepted: number; service: string | null };

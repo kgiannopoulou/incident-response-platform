@@ -105,6 +105,30 @@ recording the alert twice. Pass `idempotencyKey` yourself (for example your moni
 to make repeats safe across processes too. Even without it, a repeated alert lands in the same
 incident through its deduplication key.
 
+## Deployments and logs
+
+Evidence for the platform's incident investigator — what changed, and what the application is
+complaining about:
+
+```ts
+// In CI/CD, after a rollout:
+await incidents.deployment({
+  version: "v2.14.0",
+  commitSha: process.env.GIT_SHA,
+  description: "Raise checkout worker concurrency 8 → 32 per pod",
+  author: "Jordan Lee",
+});
+
+// From the application (warnings and errors are what matter), batched:
+await incidents.logs([
+  { level: "error", message: "timeout acquiring connection from pool after 5000ms", attributes: { pod: "checkout-7f9c" } },
+]);
+```
+
+`deployment()` takes `kind` (`deploy`, `config`, `rollback`, `migration`, `feature_flag`), `status`,
+`startedAt` / `finishedAt` (`Date` or ISO string), `url` and `metadata`. `logs()` splits arrays over
+500 entries into several requests. Both retry like `alert()` and follow `onError`.
+
 ## Verifying webhooks
 
 Fireline signs every outgoing webhook (`Fireline-Signature: t=…,v1=…`, HMAC-SHA256 of

@@ -5,6 +5,7 @@ import nodemailer from "nodemailer";
 import type { RealtimeEvent } from "@irp/shared";
 import { publishRealtime } from "@irp/shared/realtime";
 import type { PostmortemDrafter } from "./ai-drafter";
+import type { Investigator } from "./investigator/investigators";
 
 export type WorkerContext = {
   pool: Pool;
@@ -14,9 +15,12 @@ export type WorkerContext = {
   webhooksQueue: Queue;
   deadLetterQueue: Queue;
   aiDraftsQueue: Queue;
+  investigationsQueue: Queue;
   email: EmailSender;
   // Writes AI postmortem drafts (Claude, or offline rules without a key).
   drafter: PostmortemDrafter;
+  // Investigates incidents (a Claude agent, or offline correlation rules).
+  investigator: Investigator;
   // Links in emails and webhook payloads point here.
   webOrigin: string;
   // Refuse webhook URLs that resolve to private / loopback addresses (SSRF

@@ -2,6 +2,9 @@ import { Router } from "express";
 import { z } from "zod";
 import {
   alertPayloadSchema,
+  demoLogEntries,
+  deploymentPayloadSchema,
+  logBatchSchema,
   DEMO_SPEEDS,
   PRODUCTION_INCIDENT,
   simulatedAlert,
@@ -11,6 +14,7 @@ import {
 import { publishRealtime } from "@irp/shared/realtime";
 import type { Deps } from "../deps";
 import { ingestAlert, type IngestService } from "../domain/ingestion";
+import { recordDeployment, recordLogs } from "../domain/telemetry";
 import { audit } from "../lib/audit";
 import { requireAdmin } from "../lib/auth";
 import { HttpError } from "../lib/http";
@@ -57,6 +61,29 @@ export async function runScenario(
   const bySlug = new Map(services.map((s) => [s.slug, s]));
   const started = Date.now();
 
+  // What changed before the incident, and the ordinary log noise: the
+  // evidence the investigator correlates with the alerts that follow.
+  // Best effort — a missing service just means less evidence.
+  const sendLogs = async (logs: NonNullable<DemoScenario["steps"][number]["logs"]>, at: Date) => {
+    for (const log of logs) {
+      const service = bySlug.get(log.service);
+      if (service) await recordLogs(deps.pool, service, logBatchSchema.parse({ entries: demoLogEntries(log, at, state.runId) })).catch(() => undefined);
+    }
+  };
+  for (const change of scenario.changes ?? []) {
+    const service = bySlug.get(change.service);
+    if (!service) continue;
+    const startedAt = new Date(started - change.minutesBefore * 60_000);
+    const payload = deploymentPayloadSchema.parse({
+      ...change.deployment,
+      startedAt: startedAt.toISOString(),
+      finishedAt: new Date(startedAt.getTime() + 90_000).toISOString(),
+      metadata: { simulated: true, demoRun: state.runId },
+    });
+    await recordDeployment(deps.pool, service, null, payload).catch(() => undefined);
+  }
+  for (const log of scenario.baselineLogs ?? []) await sendLogs([log], new Date(started - log.minutesBefore * 60_000));
+
   for (const step of scenario.steps) {
     const wait = started + (step.at * timeScale) / state.speed - Date.now();
     if (wait > 0) await sleep(wait);
@@ -67,6 +94,7 @@ export async function runScenario(
     } else {
       try {
         const payload = alertPayloadSchema.parse(simulatedAlert(step, state.runId));
+        await sendLogs(step.logs ?? [], new Date());
         const ingested = await ingestAlert(deps, service, null, payload);
         result = { label: step.label, decision: ingested.decision, incident: ingested.incident?.number ?? null };
       } catch (err) {

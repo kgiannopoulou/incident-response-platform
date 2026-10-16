@@ -23,7 +23,7 @@ const AUTH_MESSAGES = {
 // Machine authentication for alert ingestion:
 //   blocked IP? -> 429 | missing/invalid/revoked/expired key -> 401
 //   over the key's rate limit -> 429 | otherwise continue.
-function requireApiKey(deps: Deps) {
+export function requireApiKey(deps: Deps) {
   return async (req: Request, res: Response, next: NextFunction) => {
     const ip = req.ip ?? "unknown";
     if (await deps.rateLimiter.isBlocked(ip)) {

@@ -151,6 +151,15 @@ Monitoring tool / app ──POST /api/v1/alerts──► API key (hashed lookup)
   them". Runs as a worker job with retries and the dead-letter queue; without an API key a
   deterministic offline drafter (labelled as such, not as AI) keeps the workflow usable.
   **AI-generated postmortems are treated as drafts; source timeline data remains authoritative.**
+- **AI Incident Investigator** — *Investigate* on an incident connects alerts, deployments (CI/CD
+  reports them: `POST /deployments`, `incidents.deployment()`), application logs (`POST /logs`,
+  fingerprinted into patterns with a baseline) and service dependencies, and returns ranked
+  hypotheses — each citing the evidence for and against it, with next checks — plus a reconstructed
+  timeline. With an API key Claude runs it as a bounded agent over read-only, tenant-scoped tools and
+  submits a strict-schema answer; citations are checked against the ledger of evidence the tools
+  actually returned. Without one, deterministic correlation rules produce the same shape. On the
+  demo it ranks "Deploy v2.14.0 of Checkout API" first and the Postgres connection exhaustion as its
+  symptom. Hypotheses reach the timeline only when a responder posts them, marked unconfirmed.
 - **Dashboard** — *Active incidents* worst-first with a live age ("🔴 SEV-1 Checkout unavailable
   14m"), then the last 7 / 30 / 90 days: incident count, SEV-1s, **MTTA** (mean time to acknowledge)
   and **MTTR** (mean time to resolve) with the change against the previous window, incidents per day

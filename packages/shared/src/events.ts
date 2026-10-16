@@ -28,7 +28,9 @@ export type RealtimeEvent =
   | { type: "service.updated"; serviceId: number }
   | { type: "alert.received"; alertId: number; serviceId: number }
   // A dashboard-started simulation advanced (see demo.ts).
-  | { type: "demo.progress"; runId: string; step: number; total: number; label: string; done: boolean };
+  | { type: "demo.progress"; runId: string; step: number; total: number; label: string; done: boolean }
+  // An incident investigation was queued, started, finished or failed.
+  | { type: "investigation.updated"; incidentId: number; number: number; investigationId: number; status: string };
 
 // Control messages on the stream that aren't about a resource.
 //   connected — the stream is open

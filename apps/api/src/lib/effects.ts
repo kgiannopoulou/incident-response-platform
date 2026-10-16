@@ -2,6 +2,7 @@ import { withTransaction, type PoolClient } from "@irp/database";
 import {
   ackTimeoutJobId,
   aiDraftJobOptions,
+  investigationJobOptions,
   ackTimeoutJobOptions,
   deliverJobOptions,
   escalateJobOptions,
@@ -38,6 +39,7 @@ export class Effects {
   private ackTimeouts: { incidentId: number; at: Date }[] = [];
   private cancelledAckTimeouts: number[] = [];
   private aiDrafts: number[] = [];
+  private investigations: number[] = [];
 
   publish(organizationId: number, event: RealtimeEvent) {
     this.events.push({ organizationId, event });
@@ -75,6 +77,11 @@ export class Effects {
     this.aiDrafts.push(draftId);
   }
 
+  // Ask the worker to investigate an incident (a queued row already exists).
+  investigate(investigationId: number) {
+    this.investigations.push(investigationId);
+  }
+
   async flush(deps: Pick<Deps, "redis" | "queues">) {
     try {
       if (redisIsDown(deps.redis)) throw new Error("Redis connection lost");
@@ -104,6 +111,9 @@ export class Effects {
     }
     for (const draftId of this.aiDrafts) {
       await deps.queues.aiDrafts.add("draft-postmortem", { draftId }, aiDraftJobOptions(draftId));
+    }
+    for (const id of this.investigations) {
+      await deps.queues.investigations.add("investigate", { investigationId: id }, investigationJobOptions(id));
     }
     for (const { organizationId, event } of this.events) {
       await publishRealtime(deps.redis, organizationId, event);

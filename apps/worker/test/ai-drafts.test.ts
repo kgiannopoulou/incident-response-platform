@@ -1,3 +1,4 @@
+import { rulesInvestigator } from "../src/investigator/investigators";
 import Anthropic from "@anthropic-ai/sdk";
 import { Queue, UnrecoverableError } from "bullmq";
 import { Redis } from "ioredis";
@@ -28,7 +29,9 @@ beforeAll(async () => {
     webhooksQueue: new Queue(QUEUES.webhooks, { connection }),
     deadLetterQueue: new Queue(QUEUES.deadLetter, { connection }),
     aiDraftsQueue: new Queue(QUEUES.aiDrafts, { connection }),
+    investigationsQueue: new Queue(QUEUES.investigations, { connection }),
     drafter: rulesDrafter,
+    investigator: rulesInvestigator,
     email: async () => ({ messageId: null }),
     webOrigin: "http://fireline.test",
     blockPrivateWebhookTargets: false,

@@ -109,3 +109,13 @@ NOTE_ADDED · ALERT_RESOLVED · INCIDENT_RESOLVED · POSTMORTEM_GENERATED`
   as a reviewed suggestion; publishing freezes the text.
 - **Metrics**: MTTA = `acknowledged_at − triggered_at`, MTTR = `resolved_at − triggered_at`, per
   service and severity, on the dashboard.
+
+## 7. During the incident: investigation
+
+*Investigate* on the incident page runs the **AI Incident Investigator**: it collects the evidence
+around the incident — its alerts, other open incidents, recent deployments of the service and of the
+services it depends on, and new error patterns in their logs — and returns ranked hypotheses, each
+with the evidence for and against it and the checks that would confirm it, plus a reconstructed
+timeline that starts before the incident opened. A responder can post a hypothesis to the timeline as
+their own note (marked unconfirmed); the investigator itself never changes the incident. See
+[architecture.md](architecture.md#ai-incident-investigator).

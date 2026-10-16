@@ -5,7 +5,9 @@ import type {
   AiSection,
   AlertSeverity,
   AlertStatus,
+  EvidenceItem,
   IncidentSeverity,
+  InvestigationFindings,
   IncidentStatus,
   PostmortemMetrics,
   PostmortemTimelineEntry,
@@ -250,4 +252,22 @@ export type Metrics = {
     alert_count: number;
     service_name: string | null;
   }[];
+};
+
+// An AI Incident Investigator run (or the offline correlation rules).
+export type Investigation = {
+  id: number;
+  status: "queued" | "running" | "completed" | "failed";
+  provider: "claude" | "rules" | null;
+  model: string | null;
+  findings: InvestigationFindings | null;
+  evidence: Record<string, EvidenceItem>;
+  steps: { tool: string; input: Record<string, unknown>; results: number; ms: number; error?: string }[];
+  warnings: string[];
+  usage: Record<string, number> | null;
+  error: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  requested_by_name: string | null;
 };

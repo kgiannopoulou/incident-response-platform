@@ -18,7 +18,7 @@
 // {"checkout-api":"ir_live_…"} (default: the seeded dev keys); IRP_RESPONDER
 // / IRP_PASSWORD for --respond (default sam@acme.test / password123).
 import { IncidentApiError, IncidentClient, type AlertResult } from "@incident-platform/sdk";
-import { incidentRef, PRODUCTION_INCIDENT, simulatedAlert } from "@irp/shared";
+import { demoLogEntries, incidentRef, PRODUCTION_INCIDENT, simulatedAlert, type DemoLog } from "@irp/shared";
 import { formatClock, parseArgs, planResponse, type ResponseStep } from "./demo-plan";
 
 const args = parseArgs(process.argv.slice(2));
@@ -55,13 +55,46 @@ function outcome(result: AlertResult) {
   }
 }
 
+// Logs are evidence for the investigator; a failure to send them is reported
+// but doesn't stop the scenario.
+async function sendLogs(logs: DemoLog[], at: Date) {
+  for (const l of logs) {
+    await client(l.service)
+      .logs(demoLogEntries(l, at, runId))
+      .catch((err) => console.log(`${color.dim}         (logs for ${l.service} not sent: ${(err as Error).message})${color.reset}`));
+  }
+}
+
+// What changed before the incident: deployments reported as CI/CD would.
+async function playChanges() {
+  for (const change of PRODUCTION_INCIDENT.changes ?? []) {
+    const startedAt = new Date(started - change.minutesBefore * 60_000);
+    try {
+      await client(change.service).deployment({
+        ...change.deployment,
+        startedAt,
+        finishedAt: new Date(startedAt.getTime() + 90_000),
+        metadata: { simulated: true, demoRun: runId },
+      });
+      const ago = change.minutesBefore >= 60 ? `${Math.round(change.minutesBefore / 60)} h` : `${change.minutesBefore} min`;
+      console.log(`${color.dim}  -${ago.padStart(6)}${color.reset}  ${color.cyan}DEPLOY${color.reset}    ${change.service.padEnd(17)} ${change.deployment.version} — ${change.deployment.description}`);
+    } catch (err) {
+      console.log(`${color.dim}  deploy ${change.deployment.version} not reported: ${(err as Error).message}${color.reset}`);
+    }
+  }
+  for (const l of PRODUCTION_INCIDENT.baselineLogs ?? []) await sendLogs([l], new Date(started - l.minutesBefore * 60_000));
+  console.log("");
+}
+
 async function playAlerts() {
   const opened = new Map<string, number>(); // dedup key → incident number
   console.log(`\n${PRODUCTION_INCIDENT.name}: ${PRODUCTION_INCIDENT.description}`);
   console.log(`${color.dim}API ${baseUrl} · speed ×${args.speed} · run ${runId}${color.reset}\n`);
+  await playChanges();
   for (const step of PRODUCTION_INCIDENT.steps) {
     await waitUntil(step.at);
     const alert = simulatedAlert(step, runId);
+    await sendLogs(step.logs ?? [], new Date());
     const sev = String(alert.severity).toUpperCase();
     try {
       const result = await client(alert.service).alert({ ...alert, severity: alert.severity as "CRITICAL" });

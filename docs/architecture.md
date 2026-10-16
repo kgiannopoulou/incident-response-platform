@@ -684,6 +684,85 @@ postmortems are treated as drafts; the source timeline data remains authoritativ
   evidence ids included). It's labelled *Offline rules (no AI model configured)* in the UI — never
   as AI — and it's what the tests and the demo use, so neither depends on a model.
 
+## AI incident investigator
+
+The postmortem drafter explains an incident after it's over. The investigator works *during* it:
+"what changed, what's new in the logs, what's failing upstream — and what does that add up to?"
+
+```
+CI/CD ──POST /deployments──► deployments ┐
+apps ───POST /logs─────────► log_events  │      "Investigate" ──► incident_investigations (queued)
+monitoring ─POST /alerts───► alerts      ├──►                         │ investigations queue
+admins ──dependencies──────► service_    │                            ▼
+                             dependencies┘                worker: EvidenceStore (one organization,
+                                                                  clamped time ranges, redacted)
+                                                                      │
+                     ┌────────────────────────────────────────────────┴───────────────────────┐
+                     ▼  claude (ANTHROPIC_API_KEY)                     rules (no key)         ▼
+      agent loop: Claude picks tools —                         analyzeEvidence(): temporal
+      list_alerts · list_deployments · search_logs ·           correlation of changes, new
+      get_service_dependencies · list_related_incidents ·      error patterns, dependency
+      get_incident_timeline → submit_findings (strict schema)  failures, failure signatures
+                     └──────────────────────────┬─────────────────────────────────────────────┘
+                                                ▼
+             validateFindings(): every cited id must be in the ledger of evidence the tools returned
+                                                ▼
+          findings (ranked hypotheses · evidence for/against · next checks · reconstructed timeline ·
+          open questions) + ledger + trace ── responder: "Post to timeline" → NOTE_ADDED (unconfirmed)
+```
+
+- **Evidence with ids, citations against a ledger.** Every fact the investigator can use has an id —
+  `deploy:12`, `log:9811`, `alert:alert_01J…`, `incident:INC-66`, `event:340`. The evidence store
+  records each item it returns in a ledger, stored with the investigation; findings may only cite ids
+  from it. This is stricter than "the id exists": the agent can't cite a deployment it never looked
+  at, and an invented id is removed with a visible warning. A hypothesis left without evidence is
+  downgraded to low confidence. The UI renders each citation as a chip with the evidence summary.
+- **An agent where an agent earns it.** Which evidence matters depends on the incident (a deploy? a
+  dependency? a certificate?), so the Claude path is a tool-use loop rather than one prompt with
+  everything stuffed in: the model decides what to fetch, narrows time ranges and log searches, and
+  reasons about ordering. It is bounded — 10 turns, 16 tool calls, 15 kB per tool result — and ends
+  with a `submit_findings` call whose input schema is the findings schema with `strict: true`, so the
+  final answer is schema-valid by construction. Tools are read-only; there is no tool that changes
+  anything. Requests use `claude-opus-5-5` with adaptive thinking, `fallbacks: "default"`, and the
+  assistant turns (thinking blocks included) go back unchanged.
+- **Tenant isolation is in the tools, not the prompt.** Every query in `EvidenceStore` is bound to
+  the incident's organization; the model can name any service or time range, and gets nothing for
+  another tenant's service. Ranges are clamped (≤ 24 h, not in the future); log searches escape
+  `LIKE` wildcards.
+- **Untrusted data, redacted.** Alert titles, log lines and deployment descriptions come from other
+  systems — the system prompt tells the model they are data, never instructions, and to flag any
+  that try to instruct it. Everything passes through the same `redact()` as the postmortem drafter
+  (keys, tokens, `password=…`, emails, IPs) before a model or the UI sees it.
+- **Logs as patterns, compared with a baseline.** Messages are fingerprinted with numbers, ids,
+  quoted values and IPs masked, so 190 "timeout acquiring connection from pool after 5000ms (order
+  81231)" lines are one pattern with a count, a first-seen time, and a baseline count from the
+  equally long window before. *New* error patterns that start right after a change are the
+  strongest signal there is.
+- **The offline investigator is a real one.** Without an API key, `analyzeEvidence()` scores
+  candidates deterministically: a change in the 2 hours before the first alert on the service or a
+  dependency (closer = stronger; failed/rolled-back = stronger; new errors after it = much stronger;
+  errors that predate it = contradicting evidence; a quiet change to a dependency = mostly timing);
+  a dependency that alerted or opened its own SEV1 (marked as a probable *symptom* when it started
+  after the service's own change); and failure signatures (connection exhaustion, OOM, CPU, disk,
+  TLS, DNS, provider rate limits, timeouts) that nothing else explains. It produces the same findings
+  shape, is labelled *Offline correlation rules (not AI)*, and is what the demo and the tests run.
+- **Suggestions, attributed when used.** The investigation never changes the incident. *Post to
+  timeline* turns a hypothesis into the responder's own `NOTE_ADDED` event ("AI investigator
+  hypothesis (high confidence): …"), with the investigation id, the hypothesis id and its evidence ids
+  in the metadata and `unconfirmed: true` — so the postmortem drafter later sees it as a note from a
+  person who chose to post it, not as fact.
+- **Same job machinery as everything else.** `investigate { investigationId }` on its own queue, 3
+  attempts with backoff, dead-lettered after that; refusals, bad keys and "no findings after the
+  budget" fail at once; the sweeper re-enqueues lost jobs and fails runs a dead worker left
+  `running`; one investigation in flight per incident (partial unique index).
+- **The demo has a story to find.** `npm run demo:incident` and the dashboard button now report three
+  deployments first (checkout-api v2.13.4 yesterday, an unrelated auth-service deploy 50 minutes
+  ago, checkout-api **v2.14.0 six minutes before the incident: "Raise checkout worker concurrency
+  8 → 32 per pod"**), ordinary warnings as a baseline, and with the alerts the logs: new pool-timeout
+  errors on checkout, "too many connections" on Postgres. The investigator ranks the v2.14.0 deploy
+  first (high), Postgres connection exhaustion second as its likely symptom, and the auth deploy last
+  (low: nothing changed on auth after it).
+
 ## What I'd do next for production
 
 - **Outbox table** instead of post-commit flush + sweeper, if more event types need guaranteed delivery.
@@ -693,5 +772,8 @@ postmortems are treated as drafts; the source timeline data remains authoritativ
 - **Scoped keys** (trigger-only vs. resolve) and per-organization quotas on top of per-key limits.
 - **On-call schedules** (rotations) as a third escalation target type next to users and teams.
 - **OpenTelemetry** traces across API → queue → worker.
-- **An eval set for the AI drafter**: resolved incidents with human-written postmortems, scored on
-  citation validity, root-cause agreement and invented facts, run before changing the prompt or model.
+- **An eval set for the AI drafter and the investigator**: resolved incidents with human-written
+  postmortems and known root causes, scored on citation validity, root-cause agreement (is the right
+  hypothesis ranked first?) and invented facts, run before changing a prompt, a tool or the model.
+- **More evidence sources for the investigator**: traces (slowest spans per service), metrics
+  queries (Prometheus range queries as a tool), feature-flag changes, cloud provider status pages.

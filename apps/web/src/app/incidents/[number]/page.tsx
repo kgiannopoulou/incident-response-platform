@@ -7,6 +7,7 @@ import { incidentRef } from "@irp/shared";
 import { ALERT_SEVERITY_STYLE } from "@/components/alert-feed";
 import { IncidentHeader } from "@/components/incident/incident-header";
 import { IncidentTimeline } from "@/components/incident/incident-timeline";
+import { InvestigationPanel } from "@/components/incident/investigation-panel";
 import { RespondersCard } from "@/components/incident/responders-card";
 import { Card, cx, Empty, ErrorState, Loading } from "@/components/ui";
 import { post } from "@/lib/api";
@@ -80,7 +81,8 @@ export default function IncidentPage() {
       <IncidentHeader incident={incident} busy={busy} readOnly={observing} error={actionError} act={act} />
 
       <div className="grid gap-5 lg:grid-cols-3">
-        <div className="lg:col-span-2">
+        <div className="space-y-5 lg:col-span-2">
+          <InvestigationPanel number={number} canAct={!observing} />
           <IncidentTimeline
             timeline={timeline}
             integrity={timeline_integrity}
