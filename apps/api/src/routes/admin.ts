@@ -13,6 +13,7 @@ import {
 import type { Deps } from "../deps";
 import { audit } from "../lib/audit";
 import { HttpError, notFound } from "../lib/http";
+import { TimeoutError, withTimeout } from "../lib/resilience";
 
 // Operations view of the background machinery (admins only):
 //
@@ -39,6 +40,17 @@ export async function liveWorkers(deps: Pick<Deps, "redis">) {
   return values.filter((v): v is string => v !== null).map((v) => JSON.parse(v) as WorkerHeartbeat);
 }
 
+// Queue state lives in Redis. During an outage, answer 503 quickly rather
+// than letting the System page hang on ioredis' offline queue.
+async function redisCall<T>(promise: Promise<T>) {
+  try {
+    return await withTimeout(promise, 3_000, "Redis");
+  } catch (err) {
+    if (err instanceof TimeoutError) throw new HttpError(503, "Redis is unavailable; queue state can't be read right now");
+    throw err;
+  }
+}
+
 export function adminRouter(deps: Deps) {
   const router = Router();
 
@@ -50,13 +62,13 @@ export function adminRouter(deps: Deps) {
 
   router.get("/queues", async (_req, res) => {
     const states = ["waiting", "active", "delayed", "failed", "completed", "paused"] as const;
-    const queues = await Promise.all(
+    const queues = await redisCall(Promise.all(
       [deps.queues.notifications, deps.queues.escalations, deps.queues.webhooks, deps.queues.aiDrafts, deps.queues.deadLetter].map(async (q) => ({
         name: q.name,
         counts: await q.getJobCounts(...states),
       }))
-    );
-    res.json({ queues, workers: await liveWorkers(deps) });
+    ));
+    res.json({ queues, workers: await redisCall(liveWorkers(deps)) });
   });
 
   router.get("/dead-letter", async (req, res) => {

@@ -73,6 +73,7 @@ and re-throws. The next successful run resolves that key (turn off with `resolve
 | `timeoutMs` | `10000` | Per attempt |
 | `maxRetries` | `3` | For network errors, timeouts, 5xx and 429 |
 | `baseDelayMs` | `250` | Exponential backoff: 250 ms, 500 ms, 1 s… (a 429 waits for `Retry-After`, up to `maxRetryAfterMs`) |
+| `idempotencyKey` *(per call)* | random per call | `alert({ …, idempotencyKey })` — sent as `Idempotency-Key`, reused on retries |
 | `onError` | `"throw"` | `"log"` or `(err) => void` to resolve to `null` instead of rejecting — alerting should never crash your app |
 
 `alert()` resolves to what the platform decided:
@@ -97,8 +98,12 @@ The return type follows `onError`: with `"throw"` it's `AlertResult`, otherwise 
   `retryAfterSeconds`. 4xx responses other than 429 (revoked key, invalid payload, wrong service)
   are not retried.
 
-Retrying is safe: the platform groups alerts by deduplication key, so a retried alert lands in the
-same incident.
+Retrying is safe. Every `alert()` call sends one `Idempotency-Key` header (a random UUID) and reuses
+it on each of its retries, so if an attempt was committed but its response was lost — a timeout, a
+dropped connection — the platform replays the stored response (`replayed: true`) instead of
+recording the alert twice. Pass `idempotencyKey` yourself (for example your monitoring event's id)
+to make repeats safe across processes too. Even without it, a repeated alert lands in the same
+incident through its deduplication key.
 
 ## Example
 

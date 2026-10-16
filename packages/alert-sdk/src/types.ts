@@ -15,6 +15,10 @@ export type AlertInput = {
   // Which tool or code path raised it ("prometheus", "checkout-worker"). Defaults to the client's `source`.
   source?: string;
   metadata?: Record<string, unknown>;
+  // Sent as the Idempotency-Key header. Default: a fresh random key per
+  // call, reused on its retries. Pass your own (e.g. the id of the event
+  // that triggered the alert) to make repeats across processes safe too.
+  idempotencyKey?: string;
 };
 
 export type ResolveInput =
@@ -34,6 +38,9 @@ export type AlertResult = {
   reason: string;
   incident: { id: number; number: number; status: string; severity: string; alertCount: number } | null;
   resolvedCount?: number;
+  // True when the platform replayed the stored response of an earlier
+  // request with the same idempotency key (nothing new was recorded).
+  replayed?: boolean;
 };
 
 export type CaptureOptions = {

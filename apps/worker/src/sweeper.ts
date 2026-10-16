@@ -41,8 +41,12 @@ export async function sweep(ctx: WorkerContext) {
 
   // Notifications still queued well after creation: (re-)enqueue. The job
   // id dedups against a job that is in fact still waiting in the queue.
+  // Rows under a live delivery lease are being sent right now; rows whose
+  // lease expired belong to a worker that died mid-send and are re-driven.
   const { rows: stuck } = await ctx.pool.query<{ id: number }>(
-    `SELECT id FROM notifications WHERE status = 'queued' AND created_at < now() - interval '30 seconds'
+    `SELECT id FROM notifications
+     WHERE status = 'queued' AND created_at < now() - interval '30 seconds'
+       AND (delivering_until IS NULL OR delivering_until < now())
      ORDER BY id LIMIT 200`
   );
   for (const { id } of stuck) {
@@ -54,7 +58,9 @@ export async function sweep(ctx: WorkerContext) {
   }
   // Same for webhook deliveries (outbox rows written with the change).
   const { rows: stuckHooks } = await ctx.pool.query<{ id: number }>(
-    `SELECT id FROM webhook_deliveries WHERE status = 'queued' AND created_at < now() - interval '30 seconds'
+    `SELECT id FROM webhook_deliveries
+     WHERE status = 'queued' AND created_at < now() - interval '30 seconds'
+       AND (delivering_until IS NULL OR delivering_until < now())
      ORDER BY id LIMIT 200`
   );
   for (const { id } of stuckHooks) {
@@ -74,5 +80,7 @@ export async function sweep(ctx: WorkerContext) {
             completed_at = now()
      WHERE status = 'generating' AND started_at < now() - interval '10 minutes'`
   );
+  // Idempotency keys of alert ingestion are only honoured for 24 hours.
+  await ctx.pool.query(`DELETE FROM alert_idempotency_keys WHERE created_at < now() - interval '24 hours'`);
   return { escalated, ackTimeouts, requeued: stuck.length + stuckHooks.length + stuckDrafts.length };
 }

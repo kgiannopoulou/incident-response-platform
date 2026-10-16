@@ -24,7 +24,15 @@ export type WorkerContext = {
   blockPrivateWebhookTargets: boolean;
 };
 
-export type EmailMessage = { to: { name: string; email: string }; subject: string; text: string; html: string };
+export type EmailMessage = {
+  to: { name: string; email: string };
+  subject: string;
+  text: string;
+  html: string;
+  // Fixed per notification row (see pageMessageId), so a page re-sent after
+  // a crash has the same Message-ID as the first copy.
+  messageId?: string;
+};
 
 // How a page leaves the system. Returns the provider's message id.
 export type EmailSender = (message: EmailMessage) => Promise<{ messageId: string | null }>;
@@ -40,8 +48,8 @@ export function createEmailSender(smtpUrl: string | undefined, from: string): Em
     };
   }
   const transport = nodemailer.createTransport(smtpUrl);
-  return async ({ to, subject, text, html }) => {
-    const info = await transport.sendMail({ from, to: { name: to.name, address: to.email }, subject, text, html });
+  return async ({ to, subject, text, html, messageId }) => {
+    const info = await transport.sendMail({ from, to: { name: to.name, address: to.email }, subject, text, html, messageId });
     return { messageId: info.messageId ?? null };
   };
 }

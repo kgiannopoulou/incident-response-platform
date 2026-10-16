@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
+import { isDatabaseUnavailable } from "@irp/database";
 import { InvalidTransitionError } from "@irp/shared";
 import { z, ZodError } from "zod";
 
@@ -40,6 +41,14 @@ export function errorHandler(err: unknown, _req: Request, res: Response, _next: 
   // Postgres unique violation that a handler didn't anticipate.
   if ((err as { code?: string })?.code === "23505") {
     return res.status(409).json({ error: "Conflicts with an existing record" });
+  }
+  // Postgres is unreachable (down, restarting, failing over). 503 +
+  // Retry-After tells monitoring tools and the SDK to retry the same request
+  // shortly; nothing was committed, so the retry is safe.
+  if (isDatabaseUnavailable(err)) {
+    console.error(`[degraded] database unavailable: ${(err as Error).message}`);
+    res.setHeader("Retry-After", "5");
+    return res.status(503).json({ error: "Database unavailable; retry shortly", retryable: true });
   }
   // Malformed JSON body.
   if ((err as { type?: string })?.type === "entity.parse.failed") {

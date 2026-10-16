@@ -36,6 +36,31 @@ describe("IncidentClient.alert", () => {
     });
   });
 
+  it("sends one Idempotency-Key per call and reuses it on every retry of that call", async () => {
+    let n = 0;
+    const fetchImpl = vi.fn(async () => (++n === 1 ? fail(503) : n === 2 ? fail(502) : ok()));
+    const incidents = new IncidentClient({ apiKey: "ir_live_k1", fetch: fetchImpl, baseDelayMs: 1 });
+    await incidents.alert({ severity: "high", title: "Queue backlog" });
+    await incidents.alert({ severity: "high", title: "Queue backlog" });
+    const keys = fetchImpl.mock.calls.map((_, i) => sent(fetchImpl, i).headers["Idempotency-Key"]);
+    expect(keys).toHaveLength(4);
+    expect(keys[0]).toMatch(/^sdk-[0-9a-f-]{36}$/);
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[2]).toBe(keys[0]);
+    expect(keys[3]).not.toBe(keys[0]); // a new call is a new alert
+  });
+
+  it("uses a caller-supplied idempotency key and keeps it out of the body", async () => {
+    const fetchImpl = vi.fn(async () => ok());
+    await new IncidentClient({ apiKey: "ir_live_k1", fetch: fetchImpl }).alert({
+      severity: "critical",
+      title: "Payment provider down",
+      idempotencyKey: "alertmanager-7f3a",
+    });
+    expect(sent(fetchImpl).headers["Idempotency-Key"]).toBe("alertmanager-7f3a");
+    expect(sent(fetchImpl).body).not.toHaveProperty("idempotencyKey");
+  });
+
   it("reads the key and URL from INCIDENT_API_KEY / INCIDENT_API_URL", async () => {
     vi.stubEnv("INCIDENT_API_KEY", "ir_live_from_env");
     vi.stubEnv("INCIDENT_API_URL", "https://incidents.example.com");

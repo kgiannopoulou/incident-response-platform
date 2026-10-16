@@ -4,6 +4,7 @@ import express from "express";
 import type { Deps } from "./deps";
 import { requireAdmin, requireAuth } from "./lib/auth";
 import { errorHandler } from "./lib/http";
+import { withTimeout } from "./lib/resilience";
 import { adminRouter, liveWorkers } from "./routes/admin";
 import { alertsRouter } from "./routes/alerts";
 import { authRouter } from "./routes/auth";
@@ -26,13 +27,32 @@ export function createApp(deps: Deps) {
   app.use(cookieParser());
   app.use(express.json({ limit: "256kb" }));
 
+  // Liveness: the process is up and serving. Container orchestrators restart
+  // the API only when this fails — never because a dependency is down, which
+  // a restart wouldn't fix.
+  app.get("/health/live", (_req, res) => {
+    res.json({ ok: true });
+  });
+
+  // Readiness / status. Each dependency check has a deadline, so the endpoint
+  // answers within ~2 s even while Postgres or Redis hangs.
+  //   postgres down -> 503: alerts can't be accepted (Postgres is the source of truth).
+  //   redis down    -> 200 with "degraded": alerts are still accepted and
+  //                    paged by the worker's sweeper once Redis is back.
   app.get("/health", async (_req, res) => {
-    const [db, redis, workers] = await Promise.allSettled([deps.pool.query("SELECT 1"), deps.redis.ping(), liveWorkers(deps)]);
-    const ok = db.status === "fulfilled" && redis.status === "fulfilled";
-    res.status(ok ? 200 : 503).json({
-      ok,
-      postgres: db.status === "fulfilled" ? "up" : "down",
-      redis: redis.status === "fulfilled" ? "up" : "down",
+    const [db, redis, workers] = await Promise.allSettled([
+      withTimeout(deps.pool.query("SELECT 1"), 2_000, "postgres"),
+      withTimeout(deps.redis.ping(), 1_000, "redis"),
+      withTimeout(liveWorkers(deps), 1_000, "workers"),
+    ]);
+    const postgresUp = db.status === "fulfilled";
+    const redisUp = redis.status === "fulfilled";
+    res.status(postgresUp ? 200 : 503).json({
+      ok: postgresUp && redisUp,
+      status: !postgresUp ? "unavailable" : redisUp ? "ok" : "degraded",
+      acceptingAlerts: postgresUp,
+      postgres: postgresUp ? "up" : "down",
+      redis: redisUp ? "up" : "down",
       sseClients: deps.hub.connectionCount,
       // Background workers with a fresh heartbeat. 0 doesn't fail the check —
       // the API still accepts alerts; pages wait in Postgres until one is back.

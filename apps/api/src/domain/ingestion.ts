@@ -13,6 +13,7 @@ import {
 } from "@irp/shared";
 import type { Deps } from "../deps";
 import { audit } from "../lib/audit";
+import { HttpError } from "../lib/http";
 import { Effects } from "../lib/effects";
 import { attachAlert, findOpenIncident, groupAlert } from "./correlation";
 import { addTimeline, changeStatus, createIncident, type IncidentRow } from "./incidents";
@@ -47,6 +48,9 @@ export type IngestResult = {
   reason: string;
   incident: { id: number; number: number; status: string; severity: string; alertCount: number } | null;
   resolvedCount?: number;
+  // True when this is the stored response of an earlier request with the
+  // same Idempotency-Key (nothing new was recorded).
+  replayed?: boolean;
 };
 
 const summarize = (i: IncidentRow | null) =>
@@ -57,12 +61,14 @@ export async function ingestAlert(
   deps: { pool: Pool; redis: Redis; queues: Deps["queues"] },
   service: IngestService,
   apiKeyId: number | null,
-  payload: AlertPayload
+  payload: AlertPayload,
+  // From the Idempotency-Key header; requestHash = sha256 of the body.
+  idempotency?: { key: string; requestHash: string }
 ): Promise<IngestResult> {
   const dedupKey = payload.deduplicationKey ?? computeDedupKey(service.id, payload.source, payload.title!);
   const fx = new Effects();
 
-  const result = await withTransaction(deps.pool, async (db): Promise<IngestResult> => {
+  const decide = async (db: PoolClient): Promise<IngestResult> => {
     if (payload.action === "resolve") {
       return resolveAlerts(db, fx, service, dedupKey);
     }
@@ -177,10 +183,65 @@ export async function ingestAlert(
     if (!winner) throw new Error("Dedup conflict without an open incident");
     const grouped = await groupAlert(db, fx, winner, alert);
     return respond(alert, "grouped", `Grouped into open incident (${grouped.alert_count} alerts)`, grouped);
+  };
+
+  const result = await withTransaction(deps.pool, async (db): Promise<IngestResult> => {
+    if (idempotency) {
+      const prior = await claimIdempotencyKey(db, service.id, idempotency);
+      if (prior) return { ...prior, replayed: true };
+    }
+    const decided = await decide(db);
+    if (idempotency) {
+      await db.query(`UPDATE alert_idempotency_keys SET status_code = 202, response = $3 WHERE service_id = $1 AND key = $2`, [
+        service.id,
+        idempotency.key,
+        JSON.stringify(decided),
+      ]);
+    }
+    return decided;
   });
 
+  // A replay changed nothing, so there is nothing to publish or enqueue.
   await fx.flush(deps);
   return result;
+}
+
+export const IDEMPOTENCY_TTL_HOURS = 24;
+
+// Idempotency-Key handling, inside the alert's own transaction:
+//   new key        -> claim it (INSERT) and process the alert; the response is
+//                     stored before COMMIT, so key and alert commit together.
+//   key seen before, same body -> return the stored response; nothing recorded.
+//   key seen before, other body -> 422: the client reused a key by mistake.
+//   same key in flight concurrently -> the INSERT waits for the other
+//                     transaction (unique index), then sees its committed row.
+//   key older than 24 h -> treated as new.
+async function claimIdempotencyKey(
+  db: PoolClient,
+  serviceId: number,
+  { key, requestHash }: { key: string; requestHash: string }
+): Promise<IngestResult | null> {
+  await db.query(
+    `DELETE FROM alert_idempotency_keys
+     WHERE service_id = $1 AND key = $2 AND created_at < now() - make_interval(hours => $3)`,
+    [serviceId, key, IDEMPOTENCY_TTL_HOURS]
+  );
+  const claimed = await db.query(
+    `INSERT INTO alert_idempotency_keys (service_id, key, request_hash) VALUES ($1, $2, $3)
+     ON CONFLICT (service_id, key) DO NOTHING`,
+    [serviceId, key, requestHash]
+  );
+  if (claimed.rowCount) return null;
+  const { rows } = await db.query<{ request_hash: string; response: IngestResult | null }>(
+    `SELECT request_hash, response FROM alert_idempotency_keys WHERE service_id = $1 AND key = $2`,
+    [serviceId, key]
+  );
+  const prior = rows[0];
+  if (!prior?.response) throw new HttpError(409, "A request with this Idempotency-Key is still being processed");
+  if (prior.request_hash !== requestHash) {
+    throw new HttpError(422, "This Idempotency-Key was already used with a different request body");
+  }
+  return prior.response;
 }
 
 // action: "resolve" — the monitoring tool says the problem cleared. Marks

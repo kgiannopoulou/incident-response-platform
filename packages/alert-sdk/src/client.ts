@@ -10,7 +10,7 @@ import type {
   Severity,
 } from "./types.js";
 
-export const SDK_VERSION = "0.2.0";
+export const SDK_VERSION = "0.3.0";
 
 const SEVERITIES: readonly Severity[] = ["critical", "high", "warning", "info"];
 
@@ -38,6 +38,8 @@ export class IncidentClientError extends Error {
 const env = (name: string) => (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.[name];
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
+// Web Crypto's randomUUID exists on Node 19+, Deno, Bun, edge runtimes and browsers.
+const newIdempotencyKey = () => `sdk-${globalThis.crypto.randomUUID()}`;
 
 // Sends alerts to the incident platform from any application:
 //
@@ -51,8 +53,10 @@ const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0
 //   await incidents.monitor("nightly-billing", () => runBilling());
 //
 // Network errors, timeouts and 5xx are retried with exponential backoff and
-// 429s wait for Retry-After. Retrying is safe: the platform groups alerts by
-// deduplication key, so a retried alert joins the same incident.
+// 429s wait for Retry-After. Retrying is safe: every call sends one
+// Idempotency-Key, reused on each of its retries, so if the first attempt was
+// committed but its response was lost (a timeout, a dropped connection) the
+// platform replays that response instead of recording the alert twice.
 // With onError "throw" (the default) calls resolve to the result; with "log"
 // or a handler they may resolve to null instead of rejecting.
 export type ClientResult<M extends ErrorMode> = M extends "throw" ? AlertResult : AlertResult | null;
@@ -90,14 +94,18 @@ export class IncidentClient<M extends ErrorMode = "throw"> {
       return Promise.reject(new IncidentClientError(`severity must be one of ${SEVERITIES.join(", ")} (got "${input.severity}")`));
     }
     if (!input.title?.trim()) return Promise.reject(new IncidentClientError("title is required"));
-    return this.send({
-      action: "trigger",
-      ...input,
-      severity,
-      title: clip(input.title.trim(), 300),
-      source: input.source ?? this.options.source,
-      metadata: { ...this.options.defaultMetadata, ...input.metadata },
-    });
+    const { idempotencyKey, ...fields } = input;
+    return this.send(
+      {
+        action: "trigger",
+        ...fields,
+        severity,
+        title: clip(input.title.trim(), 300),
+        source: input.source ?? this.options.source,
+        metadata: { ...this.options.defaultMetadata, ...input.metadata },
+      },
+      idempotencyKey
+    );
   }
 
   // Clear alerts — by deduplication key (a string), or by title — so the
@@ -140,9 +148,9 @@ export class IncidentClient<M extends ErrorMode = "throw"> {
     }
   }
 
-  private async send(payload: Record<string, unknown>): Promise<ClientResult<M>> {
+  private async send(payload: Record<string, unknown>, idempotencyKey?: string): Promise<ClientResult<M>> {
     try {
-      return (await this.sendWithRetries(payload)) as ClientResult<M>;
+      return (await this.sendWithRetries(payload, idempotencyKey ?? newIdempotencyKey())) as ClientResult<M>;
     } catch (err) {
       const mode = this.options.onError;
       if (mode === "throw" || err instanceof IncidentClientError) throw err;
@@ -152,7 +160,7 @@ export class IncidentClient<M extends ErrorMode = "throw"> {
     }
   }
 
-  private async sendWithRetries(payload: Record<string, unknown>): Promise<AlertResult> {
+  private async sendWithRetries(payload: Record<string, unknown>, idempotencyKey: string): Promise<AlertResult> {
     const { maxRetries, baseDelayMs, maxRetryAfterMs, timeoutMs } = this.options;
     const body = JSON.stringify(payload);
     let lastError: IncidentApiError | undefined;
@@ -170,6 +178,8 @@ export class IncidentClient<M extends ErrorMode = "throw"> {
             "Content-Type": "application/json",
             Authorization: `Bearer ${this.apiKey}`,
             "User-Agent": `incident-platform-sdk/${SDK_VERSION}`,
+            // The same key on every retry of this call (see the class comment).
+            "Idempotency-Key": idempotencyKey,
           },
           body,
           signal: AbortSignal.timeout(timeoutMs),

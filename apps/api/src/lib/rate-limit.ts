@@ -1,4 +1,5 @@
 import type { Redis } from "ioredis";
+import { logDegraded, REDIS_DEADLINE_MS, redisIsDown, trackRedis, withTimeout } from "./resilience";
 
 // Rate limiting for alert ingestion, kept in Redis so every API instance
 // shares the same counters.
@@ -13,8 +14,8 @@ import type { Redis } from "ioredis";
 //    a minute the IP gets 429 before its key is even looked up — this keeps
 //    key guessing and accidental retry storms with a wrong key cheap.
 //
-// Both fail open: if Redis is unreachable the request is let through and the
-// error logged. Losing alerts during an outage is worse than briefly losing
+// Both fail open: if Redis is unreachable (or slower than REDIS_DEADLINE_MS)
+// the request is let through and the error logged. Losing alerts during an outage is worse than briefly losing
 // rate limiting.
 
 const TOKEN_BUCKET = `
@@ -56,7 +57,9 @@ export class RateLimiter {
   constructor(
     private redis: Redis,
     private options: { authFailuresPerMinute: number; prefix?: string } = { authFailuresPerMinute: 20 }
-  ) {}
+  ) {
+    trackRedis(redis);
+  }
 
   private get prefix() {
     return this.options.prefix ?? "irp:ratelimit";
@@ -64,11 +67,11 @@ export class RateLimiter {
 
   async consumeKey(keyId: number, perMinute: number): Promise<RateLimitResult> {
     try {
-      const [allowed, remaining, retryAfterMs, fullInMs] = (await this.redis.eval(
-        TOKEN_BUCKET,
-        1,
-        `${this.prefix}:key:${keyId}`,
-        perMinute
+      if (redisIsDown(this.redis)) throw new Error("Redis connection lost");
+      const [allowed, remaining, retryAfterMs, fullInMs] = (await withTimeout(
+        this.redis.eval(TOKEN_BUCKET, 1, `${this.prefix}:key:${keyId}`, perMinute),
+        REDIS_DEADLINE_MS,
+        "rate limiter"
       )) as number[];
       return {
         allowed: allowed === 1,
@@ -78,7 +81,7 @@ export class RateLimiter {
         resetSeconds: Math.ceil(fullInMs / 1000),
       };
     } catch (err) {
-      console.error("Rate limiter unavailable, allowing request:", err);
+      logDegraded("rate limiter unavailable, allowing requests", err);
       return { allowed: true, limit: perMinute, remaining: perMinute, retryAfterSeconds: 0, resetSeconds: 0 };
     }
   }
@@ -86,9 +89,11 @@ export class RateLimiter {
   // Fixed one-minute window of failed authentications per IP.
   async isBlocked(ip: string) {
     try {
-      const count = Number(await this.redis.get(`${this.prefix}:authfail:${ip}`));
+      if (redisIsDown(this.redis)) throw new Error("Redis connection lost");
+      const count = Number(await withTimeout(this.redis.get(`${this.prefix}:authfail:${ip}`), REDIS_DEADLINE_MS, "auth-failure check"));
       return count >= this.options.authFailuresPerMinute;
-    } catch {
+    } catch (err) {
+      logDegraded("auth-failure lock-out unavailable", err);
       return false;
     }
   }
@@ -96,9 +101,10 @@ export class RateLimiter {
   async recordAuthFailure(ip: string) {
     const key = `${this.prefix}:authfail:${ip}`;
     try {
-      await this.redis.multi().incr(key).expire(key, 60, "NX").exec();
+      if (redisIsDown(this.redis)) throw new Error("Redis connection lost");
+      await withTimeout(this.redis.multi().incr(key).expire(key, 60, "NX").exec(), REDIS_DEADLINE_MS, "auth-failure record");
     } catch (err) {
-      console.error("Failed to record auth failure:", err);
+      logDegraded("failed to record auth failure", err);
     }
   }
 }

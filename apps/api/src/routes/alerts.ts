@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { alertPayloadSchema, ALERT_SEVERITIES, ALERT_STATUSES } from "@irp/shared";
 import type { Deps } from "../deps";
@@ -55,6 +56,18 @@ function requireApiKey(deps: Deps) {
   };
 }
 
+// `Idempotency-Key: <any unique string>` makes a retried POST safe: the
+// first request's response is stored and replayed for repeats (see
+// claimIdempotencyKey). The SDK sends one per alert() call automatically.
+function idempotencyFrom(req: Request) {
+  const key = req.get("Idempotency-Key")?.trim();
+  if (!key) return undefined;
+  if (key.length > 255 || !/^[!-~]+$/.test(key)) {
+    throw new HttpError(400, "Idempotency-Key must be 1-255 printable ASCII characters without spaces");
+  }
+  return { key, requestHash: createHash("sha256").update(JSON.stringify(req.body ?? null)).digest("hex") };
+}
+
 export function alertsRouter(deps: Deps) {
   const router = Router();
 
@@ -68,7 +81,8 @@ export function alertsRouter(deps: Deps) {
     if (payload.service && payload.service.toLowerCase() !== service.slug) {
       throw new HttpError(403, `This API key belongs to service "${service.slug}", not "${payload.service}"`);
     }
-    const result = await ingestAlert(deps, service, req.apiKey!.keyId, payload);
+    const result = await ingestAlert(deps, service, req.apiKey!.keyId, payload, idempotencyFrom(req));
+    if (result.replayed) res.setHeader("Idempotent-Replayed", "true");
     res.status(202).json(result);
   });
 

@@ -2,6 +2,7 @@ import type { Response } from "express";
 import type { Redis } from "ioredis";
 import { orgStream, type StreamControlEvent } from "@irp/shared";
 import { compareStreamIds, parseRealtimeMessage } from "@irp/shared/realtime";
+import { closeRedis } from "./resilience";
 
 // Fans Redis pub/sub messages out to browsers connected over Server-Sent
 // Events. One Redis subscription per API process (pattern on every
@@ -89,8 +90,7 @@ export class RealtimeHub {
   async close() {
     clearInterval(this.heartbeat);
     for (const set of this.clients.values()) for (const client of set) client.res.end();
-    await this.subscriber.quit();
-    await this.reader.quit();
+    await Promise.all([closeRedis(this.subscriber), closeRedis(this.reader)]);
   }
 }
 

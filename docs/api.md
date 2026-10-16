@@ -63,7 +63,15 @@ key resolved (`id: null`, `status: "resolved"`, `resolvedCount`). If the service
 the incident has no triggered alerts left, the incident is resolved too.
 
 Errors: `400` invalid payload · `401` missing / unknown / revoked / expired key · `403` `service`
-doesn't match the key · `429` rate limited.
+doesn't match the key · `422` `Idempotency-Key` reused with a different body · `429` rate limited ·
+`503` database unavailable (`Retry-After: 5`; nothing was recorded, retry the same request).
+
+**Idempotency.** Send `Idempotency-Key: <unique string>` (1–255 printable ASCII characters, e.g. the
+monitoring tool's event id) to make retries safe: the first request's response is stored with the
+alert, in the same transaction, and a repeat with the same key and body within 24 hours gets that
+response back with `Idempotent-Replayed: true` and `"replayed": true`, recording nothing. Keys are
+scoped to the service. The SDK sends one per call automatically. See
+[failure handling](failure-handling.md#idempotency-step-by-step).
 
 **Rate limiting.** Each key has a token bucket of `rate_limit_per_minute` (default 120): bursts up to
 that many requests, refilled continuously. Every authenticated response carries
@@ -302,6 +310,16 @@ Retries and discards are written to the audit log.
 
 ## Health
 
-`GET /health` (no auth) → `{ ok, postgres, redis, sseClients, workers }`, 503 if Postgres or Redis is
-down. `workers` is the number of workers with a fresh heartbeat; `0` doesn't fail the check (alerts are
-still accepted, pages wait in Postgres).
+`GET /health/live` (no auth) → `{ ok: true }` whenever the process is serving — the liveness probe.
+
+`GET /health` (no auth, readiness) → `{ ok, status, acceptingAlerts, postgres, redis, sseClients, workers }`,
+answered within ~2 s whatever is down:
+
+| | HTTP | `status` | `acceptingAlerts` |
+| --- | --- | --- | --- |
+| all up | 200 | `ok` | `true` |
+| Redis down | 200 | `degraded` | `true` — pages go out once Redis is back |
+| Postgres down | 503 | `unavailable` | `false` |
+
+`workers` is the number of workers with a fresh heartbeat; `0` doesn't fail the check (alerts are
+still accepted, pages wait in Postgres). See [failure handling](failure-handling.md).

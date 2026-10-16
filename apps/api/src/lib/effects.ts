@@ -10,6 +10,10 @@ import {
 } from "@irp/shared";
 import { publishRealtime } from "@irp/shared/realtime";
 import type { Deps } from "../deps";
+import { logDegraded, redisIsDown, withTimeout } from "./resilience";
+
+// The whole flush must finish within this, or we give up on what's left.
+const FLUSH_DEADLINE_MS = 2_000;
 
 // Side effects that must only happen once the database transaction has
 // committed: pushing realtime events and enqueuing background jobs. Domain
@@ -18,9 +22,14 @@ import type { Deps } from "../deps";
 // is published, so browsers and the worker never see a change that didn't
 // happen.
 //
-// If flush itself fails (Redis down), nothing is lost: notifications and
-// webhook deliveries are already rows with status 'queued' and escalations are driven by
-// incidents.next_escalation_at — the worker's sweeper picks both up.
+// If flush itself fails or times out (Redis down), nothing is lost:
+// notifications and webhook deliveries are already rows with status 'queued',
+// escalations and acknowledgement deadlines are driven by
+// incidents.next_escalation_at / ack_deadline_at, and AI drafts are 'queued'
+// rows — the worker's sweeper picks all of them up. Only live browser updates
+// are lost, and browsers resync when their stream reconnects. The deadline
+// keeps a Redis outage from holding the HTTP response of an alert that is
+// already committed.
 export class Effects {
   private events: { organizationId: number; event: RealtimeEvent }[] = [];
   private notificationIds: number[] = [];
@@ -68,30 +77,36 @@ export class Effects {
 
   async flush(deps: Pick<Deps, "redis" | "queues">) {
     try {
-      for (const { organizationId, event } of this.events) {
-        await publishRealtime(deps.redis, organizationId, event);
-      }
-      for (const id of this.notificationIds) {
-        await deps.queues.notifications.add("deliver", { notificationId: id }, deliverJobOptions(id));
-      }
-      for (const id of this.webhookDeliveryIds) {
-        await deps.queues.webhooks.add("deliver-webhook", { deliveryId: id }, webhookJobOptions(id));
-      }
-      for (const { incidentId, name } of this.escalations) {
-        await deps.queues.escalations.add(name, { incidentId }, escalateJobOptions());
-      }
-      for (const { incidentId, at } of this.ackTimeouts) {
-        const delay = Math.max(0, at.getTime() - Date.now());
-        await deps.queues.escalations.add("ack-timeout", { incidentId }, ackTimeoutJobOptions(incidentId, delay));
-      }
-      for (const incidentId of this.cancelledAckTimeouts) {
-        await deps.queues.escalations.remove(ackTimeoutJobId(incidentId)).catch(() => 0);
-      }
-      for (const draftId of this.aiDrafts) {
-        await deps.queues.aiDrafts.add("draft-postmortem", { draftId }, aiDraftJobOptions(draftId));
-      }
+      if (redisIsDown(deps.redis)) throw new Error("Redis connection lost");
+      await withTimeout(this.run(deps), FLUSH_DEADLINE_MS, "post-commit side effects");
     } catch (err) {
-      console.error("Post-commit side effects failed; the worker sweeper will recover:", err);
+      logDegraded("post-commit side effects failed; the worker sweeper will recover", err);
+    }
+  }
+
+  // Jobs first: a page matters more than a live browser update.
+  private async run(deps: Pick<Deps, "redis" | "queues">) {
+    for (const id of this.notificationIds) {
+      await deps.queues.notifications.add("deliver", { notificationId: id }, deliverJobOptions(id));
+    }
+    for (const id of this.webhookDeliveryIds) {
+      await deps.queues.webhooks.add("deliver-webhook", { deliveryId: id }, webhookJobOptions(id));
+    }
+    for (const { incidentId, name } of this.escalations) {
+      await deps.queues.escalations.add(name, { incidentId }, escalateJobOptions());
+    }
+    for (const { incidentId, at } of this.ackTimeouts) {
+      const delay = Math.max(0, at.getTime() - Date.now());
+      await deps.queues.escalations.add("ack-timeout", { incidentId }, ackTimeoutJobOptions(incidentId, delay));
+    }
+    for (const incidentId of this.cancelledAckTimeouts) {
+      await deps.queues.escalations.remove(ackTimeoutJobId(incidentId)).catch(() => 0);
+    }
+    for (const draftId of this.aiDrafts) {
+      await deps.queues.aiDrafts.add("draft-postmortem", { draftId }, aiDraftJobOptions(draftId));
+    }
+    for (const { organizationId, event } of this.events) {
+      await publishRealtime(deps.redis, organizationId, event);
     }
   }
 }

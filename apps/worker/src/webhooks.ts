@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import { WEBHOOK_DELIVERY_HEADER, WEBHOOK_EVENT_HEADER, WEBHOOK_SIGNATURE_HEADER } from "@irp/shared";
 import { signWebhook } from "@irp/shared/crypto";
 import type { WorkerContext } from "./context";
+import { claimLease } from "./delivery";
 
 const TIMEOUT_MS = 10_000;
 
@@ -40,8 +41,12 @@ export async function deliverWebhook(ctx: WorkerContext, deliveryId: number, isF
   );
   const d = rows[0];
   if (!d || d.status !== "queued") return "skipped" as const;
+  // Same lease as pages (see delivery.ts): never two POSTs of one delivery in
+  // flight at once. Receivers dedupe the rare post-crash repeat on the
+  // Fireline-Delivery header / payload id.
+  if (!(await claimLease(ctx, "webhook_deliveries", deliveryId))) return "skipped" as const;
   if (!d.enabled && d.event !== "ping") {
-    await ctx.pool.query(`UPDATE webhook_deliveries SET status = 'failed', last_error = 'Endpoint disabled' WHERE id = $1`, [deliveryId]);
+    await ctx.pool.query(`UPDATE webhook_deliveries SET status = 'failed', last_error = 'Endpoint disabled', delivering_until = NULL WHERE id = $1`, [deliveryId]);
     return "skipped" as const;
   }
 
@@ -79,6 +84,7 @@ export async function deliverWebhook(ctx: WorkerContext, deliveryId: number, isF
         : `${(err as Error).message}${cause ? ` (${cause})` : ""}`;
     await ctx.pool.query(
       `UPDATE webhook_deliveries SET attempts = attempts + 1, last_error = $2, response_status = $3, duration_ms = $4,
+              delivering_until = NULL,
               status = CASE WHEN $5 THEN 'failed' ELSE status END
        WHERE id = $1`,
       [deliveryId, message, status, Date.now() - started, isFinalAttempt || permanent]
@@ -95,6 +101,7 @@ export async function deliverWebhook(ctx: WorkerContext, deliveryId: number, isF
 
   await ctx.pool.query(
     `UPDATE webhook_deliveries SET status = 'sent', delivered_at = now(), attempts = attempts + 1, last_error = NULL,
+            delivering_until = NULL,
             response_status = $2, duration_ms = $3
      WHERE id = $1 AND status = 'queued'`,
     [deliveryId, status, Date.now() - started]

@@ -107,6 +107,19 @@ Writing tests for the rules above turned up two problems, both fixed in the same
    service id with `200` and an empty list instead of `404`. No data leaked (the query was already
    tenant-scoped), but it was the only route that didn't treat a foreign id as nonexistent.
 
+## Failure handling — `apps/api/test/failure-handling.test.ts`, `apps/worker/test/failure-handling.test.ts`
+
+The app is built against a Redis and a Postgres that are *down* (nothing listening on the port) to
+check that alerts are still accepted in under 1.5 s without Redis, that a database outage is a fast
+`503` + `Retry-After`, and that `/health` vs `/health/live` report it correctly. A third test kills
+the pool's Postgres backends with `pg_terminate_backend`, as a restart or failover would, and checks
+the next alert succeeds — before Phase 21 that crashed the process (no `error` listener on the pool).
+Idempotency: a repeat, 10 concurrent copies, a reused key with another body, per-service scope, 24 h
+expiry, and the SDK retrying after a response that was committed but never arrived. Worker side:
+5 concurrent deliveries of one page → one email, 3 of one webhook → one POST, a failed attempt
+releasing its lease, and a "crashed" worker's lease being respected and then re-driven once.
+See [failure-handling.md](failure-handling.md).
+
 ## Other suites
 
 Phase by phase, the rest of the suite covers API keys (hashing, rotation, revocation, rate limits),

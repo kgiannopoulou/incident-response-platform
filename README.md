@@ -158,6 +158,12 @@ Monitoring tool / app ──POST /api/v1/alerts──► API key (hashed lookup)
 - **Service health** derived from open incidents (SEV1 → outage, SEV2 → degraded), plus maintenance
   windows that record alerts without paging.
 - **Multi-tenant** (organizations), with `admin` / `responder` roles.
+- **Failure handling** — keeps accepting alerts while Redis is down (pages follow once it's back),
+  answers `503` + `Retry-After` instead of hanging while Postgres is down and survives a database
+  restart, `Idempotency-Key` on ingestion (the SDK sends one per call, so a retry after a lost
+  response never records an alert twice), delivery leases so a crashed or duplicated worker job never
+  pages twice in parallel, and liveness vs. readiness health checks. Every "what if…?" is answered in
+  [docs/failure-handling.md](docs/failure-handling.md) with the test that proves it.
 
 ## Architecture
 
@@ -186,7 +192,7 @@ Monitoring tool / app ──POST /api/v1/alerts──► API key (hashed lookup)
 | [`apps/simulator`](apps/simulator) | `npm run demo:incident` and the smaller `npm run simulate` scenarios, sent over HTTP with the SDK |
 | [`packages/alert-sdk`](packages/alert-sdk) | `@incident-platform/sdk`: the publishable client for applications (alerts, resolves, exceptions, job monitoring) + an example service |
 | [`docker`](docker) | Dockerfile (one build target per app) |
-| [`docs`](docs) | [Architecture & design decisions](docs/architecture.md), [API reference](docs/api.md), [Testing](docs/testing.md) |
+| [`docs`](docs) | [Architecture & design decisions](docs/architecture.md), [Failure handling](docs/failure-handling.md), [API reference](docs/api.md), [Testing](docs/testing.md) |
 
 Stack: TypeScript everywhere, Node.js 22, Express 5, PostgreSQL 16 (raw SQL via `pg`),
 Redis 7, BullMQ, Next.js 16 / React 19, Tailwind 4, zod, Vitest, Docker Compose, GitHub Actions.

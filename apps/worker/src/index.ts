@@ -1,6 +1,7 @@
 import { Queue, Worker } from "bullmq";
 import { Redis } from "ioredis";
-import { createPool } from "@irp/database";
+import { createPool, isDatabaseUnavailable } from "@irp/database";
+import { logConnection } from "@irp/shared/connection-log";
 import { QUEUES, type AiDraftJob, type DeliverNotificationJob, type DeliverWebhookJob, type EscalateIncidentJob } from "@irp/shared";
 import { handleAckTimeout } from "./ack-timeout";
 import { drafterFromEnv } from "./ai-drafter";
@@ -31,6 +32,10 @@ const ctx: WorkerContext = {
   blockPrivateWebhookTargets: process.env.WEBHOOK_BLOCK_PRIVATE_NETWORKS === "true",
 };
 const heartbeat = new Heartbeat(ctx.redis);
+logConnection("redis", ctx.redis, "work waits in Postgres; the sweeper re-drives it once Redis is back");
+for (const queue of [ctx.notificationsQueue, ctx.escalationsQueue, ctx.webhooksQueue, ctx.deadLetterQueue, ctx.aiDraftsQueue]) {
+  logConnection(`queue:${queue.name}`, queue);
+}
 
 const notifications = new Worker<DeliverNotificationJob>(
   QUEUES.notifications,
@@ -64,6 +69,7 @@ const aiDrafts = new Worker<AiDraftJob>(
   { connection, concurrency: 2 }
 );
 
+for (const worker of [notifications, escalations, webhooks, aiDrafts]) logConnection(`worker:${worker.name}`, worker);
 handleFailures(ctx, QUEUES.notifications, notifications, heartbeat.stats);
 handleFailures(ctx, QUEUES.escalations, escalations, heartbeat.stats);
 handleFailures(ctx, QUEUES.webhooks, webhooks, heartbeat.stats);
@@ -82,7 +88,8 @@ const sweepTimer = setInterval(async () => {
       console.log(`[sweep] escalated ${result.escalated}, ack timeouts ${result.ackTimeouts}, requeued ${result.requeued}`);
     }
   } catch (err) {
-    console.error("[sweep] failed:", err);
+    // Usually Postgres being unreachable; one line, not a stack trace every 10 s.
+    console.error(`[sweep] failed: ${isDatabaseUnavailable(err) ? "database unavailable" : err}`);
   } finally {
     sweeping = false;
   }
@@ -94,9 +101,19 @@ console.log(
 
 // Graceful shutdown: let in-flight jobs finish (Worker.close waits for
 // them), then release connections. A job interrupted by a hard kill is
-// re-delivered by BullMQ's stalled-job check.
+// re-delivered by BullMQ's stalled-job check, and a page or webhook that was
+// mid-delivery is re-driven by the sweeper once its lease expires. If Redis or
+// Postgres is down, closing could wait forever, so after 25 s we exit anyway
+// (docker-compose gives the worker a 30 s stop grace period).
+let shuttingDown = false;
 async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log("Shutting down worker...");
+  setTimeout(() => {
+    console.error("Shutdown deadline reached; exiting with jobs still open (they will be re-delivered)");
+    process.exit(1);
+  }, 25_000).unref();
   clearInterval(sweepTimer);
   await Promise.all([notifications.close(), escalations.close(), webhooks.close(), aiDrafts.close()]);
   await heartbeat.stop();
