@@ -1,0 +1,99 @@
+name: Release
+
+#   git tag v1.2.3 && git push origin v1.2.3
+#         │
+#         ├── ci ───────── the full CI workflow (lint, types, unit, integration, build, docker smoke)
+#         ├── images ───── api, worker and web images → ghcr.io/<owner>/fireline-<app>:1.2.3 + :latest
+#         └── release ──── GitHub release with notes and the packed @incident-platform/sdk tarball
+#
+# Run the published images without building anything:
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.images.yml up -d
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  images:
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        app: [api, worker, web]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/fireline-${{ matrix.app }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=sha
+          labels: |
+            org.opencontainers.image.title=fireline-${{ matrix.app }}
+            org.opencontainers.image.description=Fireline incident response platform — ${{ matrix.app }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: ${{ matrix.app }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+
+  release:
+    needs: images
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - name: Pack the SDK
+        run: npm pack -w @incident-platform/sdk
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          cat > notes.md <<EOF
+          ## Container images
+
+          \`\`\`sh
+          docker pull ghcr.io/${OWNER}/fireline-api:${TAG#v}
+          docker pull ghcr.io/${OWNER}/fireline-worker:${TAG#v}
+          docker pull ghcr.io/${OWNER}/fireline-web:${TAG#v}
+
+          # or run the whole platform from the published images:
+          FIRELINE_VERSION=${TAG#v} docker compose -f docker-compose.yml -f deploy/docker-compose.images.yml up -d
+          \`\`\`
+
+          The \`@incident-platform/sdk\` tarball is attached (\`npm install ./incident-platform-sdk-*.tgz\`).
+          EOF
+          gh release create "$TAG" incident-platform-sdk-*.tgz --title "Fireline $TAG" --notes-file notes.md --generate-notes

@@ -17,9 +17,13 @@
     "stack:down": "docker compose down",
     "smoke": "node scripts/smoke-test.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "lint": "npm run lint --workspaces --if-present",
+    "lint": "eslint && npm run lint -w @irp/web",
     "test": "npm run test --workspaces --if-present",
+    "test:unit": "npm run test -w @irp/shared -w @incident-platform/sdk -w @irp/simulator",
+    "test:integration": "npm run test -w @irp/api -w @irp/worker",
     "test:coverage": "npm run test:coverage --workspaces --if-present",
+    "test:unit:coverage": "npm run test:coverage -w @irp/shared -w @incident-platform/sdk -w @irp/simulator",
+    "test:integration:coverage": "npm run test:coverage -w @irp/api -w @irp/worker",
     "simulate": "npm run simulate -w @irp/simulator",
     "demo:incident": "npm run demo:incident -w @irp/simulator --"
   },
@@ -27,6 +31,10 @@
     "node": ">=20"
   },
   "devDependencies": {
-    "@vitest/coverage-v8": "^4.1.11"
+    "@eslint/js": "^9.39.5",
+    "@vitest/coverage-v8": "^4.1.11",
+    "eslint": "^9.39.5",
+    "globals": "^14.0.0",
+    "typescript-eslint": "^8.71.2"
   }
 }

@@ -23,7 +23,7 @@ import { assertCanAct, removeResponder, setResponderRole, type RoleActor } from 
 import type { PoolClient } from "@irp/database";
 import { audit } from "../lib/audit";
 import { runTx } from "../lib/effects";
-import { HttpError, notFound, parseId } from "../lib/http";
+import { notFound, parseId } from "../lib/http";
 
 const actorOf = (req: Request): Actor => ({ id: req.user!.id, name: req.user!.name });
 const numberParam = (req: Request) => parseId(req.params.number, "Incident");

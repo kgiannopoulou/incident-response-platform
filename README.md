@@ -1,5 +1,7 @@
 # Fireline — Incident Response Platform
 
+[![CI](https://github.com/kgiannopoulou/incident-response-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/kgiannopoulou/incident-response-platform/actions/workflows/ci.yml)
+
 A small, PagerDuty/Opsgenie-style incident management platform. Monitoring tools send
 alerts; the platform deduplicates them, applies matching rules, opens incidents, pages
 the on-call responder and escalates if nobody answers. Responders then work the
@@ -496,8 +498,28 @@ with `FOR NO KEY UPDATE`; details in [docs/testing.md](docs/testing.md#what-thes
   server-side fallback) via a fake client, and the review gate: only chosen sections are applied, the
   timeline and metrics never change, publishing needs a confirmed review and a confirmed root cause.
 
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs typecheck, lint, all tests
-against Postgres/Redis service containers, the web production build, and the Docker image build.
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on every push and pull request,
+as parallel jobs:
+
+```
+Push / Pull Request
+        │
+        ├── ESLint ──────────── Node workspaces + Next.js rules
+        ├── TypeScript check ── every workspace
+        ├── Unit tests ──────── shared logic, SDK, simulator (with coverage)
+        ├── Integration tests ─ API + worker against Postgres 16 + Redis 7 service containers (with coverage)
+        ├── Build ───────────── Next.js production build; SDK compiled, packed and smoke-imported
+        └── Docker ──────────── all images built, `docker compose up --wait`, end-to-end smoke test
+```
+
+**Delivery** ([`.github/workflows/release.yml`](.github/workflows/release.yml)): pushing a version
+tag (`v1.0.0`) re-runs the whole CI, then publishes the `api`, `worker` and `web` images to GitHub
+Container Registry (`ghcr.io/kgiannopoulou/fireline-*`, tagged with the version and `latest`) and
+creates a GitHub release with the packed SDK attached. Run a release without building:
+
+```sh
+FIRELINE_VERSION=1.0.0 docker compose -f docker-compose.yml -f deploy/docker-compose.images.yml up -d --no-build
+```
 
 ## Roadmap
 

@@ -1,15 +1,70 @@
 name: CI
 
+#   push / pull request
+#         │
+#         ├── lint ─────────── ESLint (Node workspaces + Next.js rules)
+#         ├── typecheck ────── tsc --noEmit, every workspace
+#         ├── unit ─────────── shared domain logic, SDK, simulator (no services)
+#         ├── integration ──── API + worker against real Postgres 16 and Redis 7, with coverage
+#         ├── build ────────── Next.js production build, SDK compiled + packed + smoke-imported
+#         └── docker ───────── build all images, `docker compose up --wait`, end-to-end smoke test
+#
+# release.yml reuses this workflow before publishing images for a version tag.
+
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
 
 jobs:
-  check:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run lint
+
+  typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run typecheck
+
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - name: Unit tests with coverage
+        run: npm run test:unit:coverage
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-unit
+          path: "*/*/coverage/coverage-summary.json"
+          if-no-files-found: warn
+
+  integration:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-
     # Integration tests run against real Postgres and Redis, same as locally.
     services:
       postgres:
@@ -28,32 +83,32 @@ jobs:
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 5s --health-timeout 5s --health-retries 10
-
     env:
       DATABASE_URL: postgres://incidents:incidents@localhost:5435/incidents
       REDIS_URL: redis://localhost:6380
       JWT_SECRET: ci-only-secret
-
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
+        with: { node-version: 22, cache: npm }
       - run: npm ci
-      - name: Typecheck
-        run: npm run typecheck
-      - name: Lint
-        run: npm run lint
-      - name: Test (unit + integration) with coverage
-        run: npm run test:coverage
-      - name: Upload coverage summaries
+      - name: Integration tests (API + worker) with coverage
+        run: npm run test:integration:coverage
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
-          name: coverage
+          name: coverage-integration
           path: "*/*/coverage/coverage-summary.json"
           if-no-files-found: warn
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
       - name: Build web
         run: npm run build -w @irp/web
       - name: Build and pack the SDK
@@ -68,5 +123,17 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Build images
-        run: docker compose build
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Build images and start the stack
+        run: docker compose up -d --build --wait --wait-timeout 180
+      - name: End-to-end smoke test (alert → incident → email page → ack → resolve)
+        run: node scripts/smoke-test.mjs
+      - name: Container status and logs
+        if: always()
+        run: |
+          docker compose ps
+          docker compose logs --no-color --tail 200 api worker migrate web
+      - name: Stop
+        if: always()
+        run: docker compose down -v
