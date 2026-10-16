@@ -16,6 +16,8 @@ const port = Number(process.env.PORT ?? 4100);
 
 // In production this would be a table / Redis set with a TTL.
 const seen = new Set<string>();
+// Payload values are someone else's data: no newlines into our logs.
+const safe = (value: unknown) => String(value ?? "").replace(/[\r\n]+/g, " ").slice(0, 200);
 
 http
   .createServer((req, res) => {
@@ -32,11 +34,11 @@ http
       try {
         const event = await constructWebhookEvent(secret, rawBody, req.headers[SIGNATURE_HEADER] as string | undefined);
         if (seen.has(event.id)) {
-          console.log(`duplicate ${event.id} ignored`);
+          console.log(`duplicate ${safe(event.id)} ignored`);
           return res.writeHead(200).end();
         }
         seen.add(event.id);
-        console.log(`${event.event} ${event.incident?.id ?? ""} ${event.incident?.title ?? ""}`.trim());
+        console.log(`${safe(event.event)} ${safe(event.incident?.id)} ${safe(event.incident?.title)}`.trim());
         res.writeHead(204).end();
       } catch (err) {
         if (err instanceof WebhookSignatureError) {

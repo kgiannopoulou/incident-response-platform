@@ -39,6 +39,7 @@ export async function createTestContext() {
     hub,
     rateLimiter: new RateLimiter(redis, { authFailuresPerMinute: 20 }),
     loginThrottle: new LoginThrottle(redis),
+    floodGuardPerMinute: 100_000, // the suites fire thousands of requests; security.test.ts tests the guard itself
     jwtSecret: "test-secret",
     webOrigin: "http://localhost:3000",
     secureCookies: false,

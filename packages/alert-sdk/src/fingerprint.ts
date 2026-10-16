@@ -10,10 +10,13 @@
 // Numbers, ids and quoted values in the message are masked, so "order 4711
 // failed" and "order 4712 failed" group together.
 
+// Input is clipped first and every pattern is linear, so a hostile message
+// (thousands of quotes or spaces) can't make fingerprinting slow.
 export function normalizeMessage(message: string) {
   return message
+    .slice(0, 2000)
     .toLowerCase()
-    .replace(/(["'`]).*?\1/g, "<str>")
+    .replace(/"[^"]*"|'[^']*'|`[^`]*`/g, "<str>")
     .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<uuid>")
     .replace(/\b0x[0-9a-f]+\b/g, "<hex>")
     .replace(/\d+(\.\d+)?/g, "<n>")
@@ -23,12 +26,18 @@ export function normalizeMessage(message: string) {
 
 // "at loadCart (/srv/checkout/cart.js:41:17)" → "loadCart cart.js"
 export function topFrame(stack: string | undefined) {
-  const line = stack?.split("\n").find((l) => /^\s*at\s/.test(l));
+  const line = stack?.split("\n").find((l) => l.trimStart().startsWith("at "));
   if (!line) return "";
-  const match = /at\s+(?:(.*?)\s+\()?(.*?)(?::\d+)?(?::\d+)?\)?\s*$/.exec(line.trim());
-  if (!match) return "";
-  const fn = match[1] ?? "";
-  const file = (match[2] ?? "").split(/[\\/]/).pop() ?? "";
+  // Plain string handling instead of one backtracking regex.
+  let rest = line.trim().slice(3, 500).trim();
+  let fn = "";
+  const open = rest.lastIndexOf(" (");
+  if (open !== -1 && rest.endsWith(")")) {
+    fn = rest.slice(0, open).trim();
+    rest = rest.slice(open + 2, -1);
+  }
+  const location = rest.replace(/(?::\d+){1,2}$/, "");
+  const file = location.split(/[\\/]/).pop() ?? "";
   return `${fn} ${file}`.trim();
 }
 

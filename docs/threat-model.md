@@ -107,7 +107,7 @@ scaled down to a SaaS application.
 | Control | Status | Where |
 | --- | --- | --- |
 | API key hashing | ✓ | `packages/shared/src/crypto.ts` (`hashApiKey`), `api_keys.key_hash` |
-| Rate limiting | ✓ | alerts: `RateLimiter` (token bucket); bad keys: IP lock-out; logins: `LoginThrottle` |
+| Rate limiting | ✓ | alerts: `RateLimiter` (token bucket); bad keys: IP lock-out; logins: `LoginThrottle`; every route: `floodGuard` (1,200 req/min per credential or IP) |
 | RBAC | ✓ | org roles `admin` / `responder` (`requireAdmin`); incident roles commander / responder / observer |
 | Secure cookies | ✓ | httpOnly, `SameSite=Strict`, `Secure` with `COOKIE_SECURE=true`, HSTS when secure |
 | CSRF protection | ✓ | Origin check for cookie-authenticated writes + login, JSON-only bodies (`csrfProtection`) |

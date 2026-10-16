@@ -78,7 +78,9 @@ export class IncidentClient<M extends ErrorMode = "throw"> {
     if (!apiKey) throw new IncidentClientError("An API key is required: pass { apiKey } or set INCIDENT_API_KEY");
     this.apiKey = apiKey;
     const baseUrl = options.baseUrl ?? env("INCIDENT_API_URL") ?? "http://localhost:4000";
-    this.baseUrl = baseUrl.replace(/\/+$/, "");
+    let trimmed = baseUrl;
+    while (trimmed.endsWith("/")) trimmed = trimmed.slice(0, -1);
+    this.baseUrl = trimmed;
     this.options = {
       source: options.source ?? "sdk",
       defaultMetadata: options.defaultMetadata ?? {},

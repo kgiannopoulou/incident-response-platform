@@ -2,6 +2,7 @@ import jwt from "jsonwebtoken";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { TEST_KEYS, TEST_PASSWORD } from "@irp/database/testing";
+import { createApp } from "../src/app";
 import { checkJwtSecret } from "../src/lib/security";
 import { createTestContext, type TestContext } from "./helpers";
 
@@ -50,6 +51,19 @@ describe("security headers", () => {
     const evil = await request(t.app).options("/api/v1/incidents").set("Origin", "https://evil.example").set("Access-Control-Request-Method", "POST");
     // The allowed origin is fixed, so a browser on another origin sees a mismatch and blocks the read.
     expect(evil.headers["access-control-allow-origin"]).not.toBe("https://evil.example");
+  });
+});
+
+describe("flood guard", () => {
+  it("limits requests per credential across the API, separately for each credential", async () => {
+    const app = createApp({ ...t.deps, floodGuardPerMinute: 5 });
+    const sam = await t.as("sam");
+    for (let i = 0; i < 5; i++) await request(app).get("/api/v1/incidents").set(sam).expect(200);
+    const limited = await request(app).get("/api/v1/incidents").set(sam);
+    expect(limited.status).toBe(429);
+    expect(limited.body).toEqual({ error: "Too many requests; slow down" });
+    expect(limited.headers["ratelimit-policy"]).toBeDefined();
+    await request(app).get("/api/v1/incidents").set(await t.as("jordan")).expect(200);
   });
 });
 

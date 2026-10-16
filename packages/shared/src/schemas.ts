@@ -112,7 +112,10 @@ export function slugify(name: string) {
   return name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .slice(0, 200)
+    .split("-")
+    .filter(Boolean) // drops leading/trailing dashes without a backtracking regex
+    .join("-")
     .slice(0, 100);
 }
 

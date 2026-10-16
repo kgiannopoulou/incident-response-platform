@@ -13,6 +13,8 @@ export type Deps = {
   hub: RealtimeHub;
   rateLimiter: RateLimiter;
   loginThrottle: LoginThrottle;
+  // Requests per minute per credential (or IP) across the whole API; default 1200.
+  floodGuardPerMinute?: number;
   jwtSecret: string;
   webOrigin: string;
   secureCookies: boolean;

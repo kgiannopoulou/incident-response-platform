@@ -1,4 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
+import { createHash } from "node:crypto";
+import { rateLimit } from "express-rate-limit";
 import helmet from "helmet";
 import { SESSION_COOKIE } from "./auth";
 import { HttpError } from "./http";
@@ -89,4 +91,26 @@ export function checkJwtSecret(secret: string, { demo }: { demo: boolean }) {
   const fix = "Generate one with: node -e \"console.log(require('crypto').randomBytes(48).toString('base64url'))\"";
   if (demo) return { ok: true as const, warning: `${problem}. Fine for the local demo, never for real data. ${fix}` };
   return { ok: false as const, error: `${problem}. Refusing to start with DEMO_ENABLED=false. ${fix}` };
+}
+
+// A coarse flood guard in front of every API route: at most `perMinute`
+// requests per credential (API key, session token or cookie — hashed) or,
+// without one, per client IP. It sits above the finer limits (per-key token
+// bucket for ingestion, login throttling) and stops one script or stuck
+// dashboard from monopolising the API. In-memory per API instance: it guards
+// the process, it isn't a quota.
+export function floodGuard(perMinute: number) {
+  return rateLimit({
+    windowMs: 60_000,
+    limit: perMinute,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    keyGenerator: (req) => {
+      const credential = req.headers.authorization ?? req.cookies?.[SESSION_COOKIE];
+      return credential ? `c:${createHash("sha256").update(credential).digest("base64url").slice(0, 22)}` : `ip:${req.ip}`;
+    },
+    handler: (_req, res) => {
+      res.status(429).json({ error: "Too many requests; slow down" });
+    },
+  });
 }

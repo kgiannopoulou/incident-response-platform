@@ -5,7 +5,7 @@ import type { Deps } from "./deps";
 import { requireAdmin, requireAuth } from "./lib/auth";
 import { errorHandler } from "./lib/http";
 import { withTimeout } from "./lib/resilience";
-import { csrfProtection, noStore, securityHeaders } from "./lib/security";
+import { csrfProtection, floodGuard, noStore, securityHeaders } from "./lib/security";
 import { adminRouter, liveWorkers } from "./routes/admin";
 import { alertsRouter } from "./routes/alerts";
 import { authRouter } from "./routes/auth";
@@ -69,6 +69,7 @@ export function createApp(deps: Deps) {
   });
 
   const v1 = express.Router();
+  v1.use(floodGuard(deps.floodGuardPerMinute ?? 1200));
   v1.use(noStore);
   v1.use("/auth", authRouter(deps));
   v1.use("/alerts", alertsRouter(deps)); // ingestion uses integration keys, the feed uses sessions
