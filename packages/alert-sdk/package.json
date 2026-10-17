@@ -36,7 +36,7 @@
     "example:webhooks": "tsx --conditions=@incident-platform/source examples/webhook-receiver.ts"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
+    "@types/node": "^26.6.5",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0",
     "vitest": "^4.0.0"
