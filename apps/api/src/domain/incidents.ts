@@ -202,7 +202,17 @@ export async function createIncident(db: PoolClient, fx: Effects, input: NewInci
       input.actor?.id ?? null,
     ]
   );
-  if (!rows[0]) return null;
+  if (!rows[0]) {
+    // Lost the race to a concurrent incident for the same key: give the
+    // number back so INC-numbers stay gapless. Safe, because the UPDATE above
+    // still holds the organization's row lock — nobody has taken a later one.
+    // (Found by the alert-storm test in ingestion-load.test.ts.)
+    await db.query(`UPDATE organizations SET incident_counter = incident_counter - 1 WHERE id = $1 AND incident_counter = $2`, [
+      input.organizationId,
+      number,
+    ]);
+    return null;
+  }
   const incident = await syncAckTimeout(db, fx, rows[0]);
 
   if (input.actor) await addResponderRow(db, incident.id, input.actor.id, "commander");

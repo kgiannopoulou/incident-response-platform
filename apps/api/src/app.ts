@@ -4,8 +4,10 @@ import express from "express";
 import type { Deps } from "./deps";
 import { requireAdmin, requireAuth } from "./lib/auth";
 import { errorHandler } from "./lib/http";
+import { IngestionStats } from "./lib/ingestion-stats";
 import { withTimeout } from "./lib/resilience";
 import { csrfProtection, floodGuard, noStore, securityHeaders } from "./lib/security";
+import { buildOpenApi } from "./openapi";
 import { adminRouter, liveWorkers } from "./routes/admin";
 import { alertsRouter } from "./routes/alerts";
 import { authRouter } from "./routes/auth";
@@ -22,7 +24,8 @@ import { webhooksRouter } from "./routes/webhooks";
 
 // Builds the Express app from injected dependencies (see deps.ts), so tests
 // can run it in-process against a test database without listening on a port.
-export function createApp(deps: Deps) {
+export function createApp(given: Deps) {
+  const deps: Deps = { ...given, ingestionStats: given.ingestionStats ?? new IngestionStats() };
   const app = express();
   app.disable("x-powered-by");
   if (deps.trustProxy !== undefined) app.set("trust proxy", deps.trustProxy);
@@ -71,6 +74,10 @@ export function createApp(deps: Deps) {
   const v1 = express.Router();
   v1.use(floodGuard(deps.floodGuardPerMinute ?? 1200));
   v1.use(noStore);
+  const openApi = buildOpenApi();
+  v1.get("/openapi.json", (_req, res) => {
+    res.json(openApi);
+  });
   v1.use("/auth", authRouter(deps));
   v1.use("/alerts", alertsRouter(deps)); // ingestion uses integration keys, the feed uses sessions
   v1.use("/deployments", deploymentsRouter(deps)); // same: CI/CD reports with keys, the list uses sessions

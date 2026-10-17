@@ -17,6 +17,8 @@ import { requireAdmin } from "../lib/auth";
 import { runTx } from "../lib/effects";
 import { HttpError, notFound, parseId } from "../lib/http";
 
+export const serviceRulesSchema = z.object({ rules: z.array(alertRuleSchema).max(50) });
+
 export function servicesRouter(deps: Deps) {
   const router = Router();
 
@@ -267,7 +269,7 @@ export function servicesRouter(deps: Deps) {
   // Replaces the whole ordered rule list (the editor saves it as one unit).
   router.put("/:id/rules", requireAdmin, async (req, res) => {
     const id = parseId(req.params.id, "Service");
-    const { rules } = z.object({ rules: z.array(alertRuleSchema).max(50) }).parse(req.body);
+    const { rules } = serviceRulesSchema.parse(req.body);
     await runTx(deps, async (db) => {
       const { rows } = await db.query(`SELECT 1 FROM services WHERE id = $1 AND organization_id = $2 FOR NO KEY UPDATE`, [
         id,

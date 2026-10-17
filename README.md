@@ -2,6 +2,12 @@
 
 [![CI](https://github.com/kgiannopoulou/incident-response-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/kgiannopoulou/incident-response-platform/actions/workflows/ci.yml)
 [![CodeQL](https://github.com/kgiannopoulou/incident-response-platform/actions/workflows/codeql.yml/badge.svg)](https://github.com/kgiannopoulou/incident-response-platform/actions/workflows/codeql.yml)
+![Tests](https://img.shields.io/badge/tests-367%20passing-brightgreen)
+[![Coverage](https://img.shields.io/badge/coverage-93%25%20lines-brightgreen)](docs/testing.md)
+[![Ingestion](https://img.shields.io/badge/ingestion-~340%20alerts%2Fs%20per%20API%20process-blue)](docs/benchmarks.md)
+[![OpenAPI](https://img.shields.io/badge/OpenAPI-3.1-6BA539)](docs/openapi.json)
+![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6)
+[![Release](https://img.shields.io/github/v/release/kgiannopoulou/incident-response-platform)](https://github.com/kgiannopoulou/incident-response-platform/releases)
 
 A self-hosted incident-management platform for receiving monitoring alerts, correlating them into
 incidents, coordinating responders, managing escalations, investigating causes and producing
@@ -28,13 +34,49 @@ the first alert, the new connection-pool errors after it, and Postgres running o
 the likely symptom — every claim backed by evidence chips, and a timeline that starts before the
 incident did.*
 
+## Architecture
+
+```mermaid
+flowchart LR
+  subgraph clients[" "]
+    MON["Monitoring tools /<br/>apps with the SDK"]
+    CI["CI/CD"]
+    BR["Browser"]
+  end
+  MON -- "POST /alerts, /logs<br/>API key" --> API
+  CI -- "POST /deployments<br/>API key" --> API
+  BR -- "HTTPS + cookie" --> WEB["apps/web<br/>Next.js"]
+  BR -- "REST + SSE" --> API["apps/api<br/>Express"]
+  API -- "SQL, one transaction<br/>per change" --> PG[("PostgreSQL<br/>source of truth")]
+  API -- "job ids after COMMIT,<br/>pub/sub + stream" --> RD[("Redis<br/>BullMQ, SSE fan-out,<br/>rate limits")]
+  RD <--> WK["apps/worker<br/>escalation · notifications ·<br/>webhooks · AI drafts ·<br/>investigations · sweeper"]
+  WK --> PG
+  WK -- "email" --> SMTP["SMTP / Mailpit"]
+  WK -- "signed POST" --> HOOK["Webhook receivers"]
+  WK -- "redacted context" --> CL["Claude API<br/>(optional)"]
+```
+
+| Path | What it is |
+| --- | --- |
+| [`apps/api`](apps/api) | Express 5 + TypeScript REST API: ingestion, incidents, services, escalation, postmortems, investigations, audit log, SSE |
+| [`apps/worker`](apps/worker) | BullMQ worker: escalation, email and webhook delivery, AI drafts, the investigator, the recovery sweeper |
+| [`apps/web`](apps/web) | Next.js 16 (App Router) + Tailwind dashboard |
+| [`apps/simulator`](apps/simulator) | `npm run demo:incident` and smaller scenarios, sent over HTTP with the SDK |
+| [`packages/database`](packages/database) | Plain-SQL migrations (13), runner, seed, pool + transaction helper, test fixtures |
+| [`packages/shared`](packages/shared) | Domain types, zod schemas, state machine, rules, dedup, postmortem generator, investigator engine (pure, unit-tested) |
+| [`packages/alert-sdk`](packages/alert-sdk) | `@incident-platform/sdk`, the publishable client |
+| [`docs`](docs) | [Architecture & decisions](docs/architecture.md) · [Threat model](docs/threat-model.md) · [Incident lifecycle](docs/incident-lifecycle.md) · [Failure handling](docs/failure-handling.md) · [API](docs/api.md) + [OpenAPI](docs/openapi.json) · [Testing](docs/testing.md) · [Benchmarks](docs/benchmarks.md) |
+
+Stack: TypeScript everywhere, Node.js 22, Express 5, PostgreSQL 16 (raw SQL via `pg`), Redis 7,
+BullMQ, Next.js 16 / React 19, Tailwind 4, zod, Anthropic SDK, Vitest, Docker Compose, GitHub Actions.
+
 ## Contents
 
-[Features](#features) · [Architecture](#architecture) · [Incident lifecycle](#incident-lifecycle) ·
+[Architecture](#architecture) · [Features](#features) · [Incident lifecycle](#incident-lifecycle) ·
 [Alert ingestion](#alert-ingestion) · [Deduplication](#deduplication-strategy) ·
 [Background jobs](#background-jobs) · [Real-time](#real-time-architecture) · [AI](#ai-used-carefully) ·
 [Database](#database-design) · [Security](#security) · [Failure handling](#failure-handling) ·
-[Running locally](#running-locally) · [API](#api-documentation) · [Testing](#testing) ·
+[Performance](#performance-under-load) · [Running locally](#running-locally) · [API](#api-documentation) · [Testing](#testing) ·
 [CI/CD](#cicd) · [Engineering decisions](#engineering-decisions)
 
 ## Features
@@ -79,42 +121,6 @@ responders by role, paging and grouped alerts.*
 | ![API keys](docs/screenshots/api-keys.jpg) | ![Postmortem](docs/screenshots/postmortem.jpg) |
 
 </details>
-
-## Architecture
-
-```mermaid
-flowchart LR
-  subgraph clients[" "]
-    MON["Monitoring tools /<br/>apps with the SDK"]
-    CI["CI/CD"]
-    BR["Browser"]
-  end
-  MON -- "POST /alerts, /logs<br/>API key" --> API
-  CI -- "POST /deployments<br/>API key" --> API
-  BR -- "HTTPS + cookie" --> WEB["apps/web<br/>Next.js"]
-  BR -- "REST + SSE" --> API["apps/api<br/>Express"]
-  API -- "SQL, one transaction<br/>per change" --> PG[("PostgreSQL<br/>source of truth")]
-  API -- "job ids after COMMIT,<br/>pub/sub + stream" --> RD[("Redis<br/>BullMQ, SSE fan-out,<br/>rate limits")]
-  RD <--> WK["apps/worker<br/>escalation · notifications ·<br/>webhooks · AI drafts ·<br/>investigations · sweeper"]
-  WK --> PG
-  WK -- "email" --> SMTP["SMTP / Mailpit"]
-  WK -- "signed POST" --> HOOK["Webhook receivers"]
-  WK -- "redacted context" --> CL["Claude API<br/>(optional)"]
-```
-
-| Path | What it is |
-| --- | --- |
-| [`apps/api`](apps/api) | Express 5 + TypeScript REST API: ingestion, incidents, services, escalation, postmortems, investigations, audit log, SSE |
-| [`apps/worker`](apps/worker) | BullMQ worker: escalation, email and webhook delivery, AI drafts, the investigator, the recovery sweeper |
-| [`apps/web`](apps/web) | Next.js 16 (App Router) + Tailwind dashboard |
-| [`apps/simulator`](apps/simulator) | `npm run demo:incident` and smaller scenarios, sent over HTTP with the SDK |
-| [`packages/database`](packages/database) | Plain-SQL migrations (13), runner, seed, pool + transaction helper, test fixtures |
-| [`packages/shared`](packages/shared) | Domain types, zod schemas, state machine, rules, dedup, postmortem generator, investigator engine (pure, unit-tested) |
-| [`packages/alert-sdk`](packages/alert-sdk) | `@incident-platform/sdk`, the publishable client |
-| [`docs`](docs) | [Architecture & decisions](docs/architecture.md) · [Threat model](docs/threat-model.md) · [Incident lifecycle](docs/incident-lifecycle.md) · [Failure handling](docs/failure-handling.md) · [API](docs/api.md) · [Testing](docs/testing.md) |
-
-Stack: TypeScript everywhere, Node.js 22, Express 5, PostgreSQL 16 (raw SQL via `pg`), Redis 7,
-BullMQ, Next.js 16 / React 19, Tailwind 4, zod, Anthropic SDK, Vitest, Docker Compose, GitHub Actions.
 
 ## Incident lifecycle
 
@@ -335,6 +341,27 @@ same webhook arrives twice?* Each is answered, with the test that proves it, in
 | The worker crashes mid-job | Leases + sweeper: never two sends in parallel, never dropped, stable Message-IDs for the rare duplicate |
 | The same webhook twice | `Idempotency-Key`: recorded once, the first response replayed |
 
+## Performance under load
+
+[docs/benchmarks.md](docs/benchmarks.md) — `npm run loadtest` fires an alert storm at a running stack
+and checks it stayed correct; the same shape runs in CI as
+[`ingestion-load.test.ts`](apps/api/test/ingestion-load.test.ts).
+
+| 2,000 alerts, 20 problems | Throughput | API p50 | API p95 | API p99 |
+| --- | ---: | ---: | ---: | ---: |
+| 10 in flight | 318 alerts/s | 17 ms | 22 ms | 39 ms |
+| 50 in flight | 345 alerts/s | 121 ms | 144 ms | 337 ms |
+
+One API process on a laptop (Ryzen 7 5800H, Postgres and Redis in Docker). Every run: exactly one
+incident per problem, every alert attached, one page per incident, no 5xx. It saturates at ~340
+alerts/s per process — every alert is a full Postgres transaction — and the API is stateless, so it
+scales out. The API measures its own ingestion latency too: the **System** page shows alerts/s and
+p50 / p95 / p99 live (`GET /api/v1/admin/ingestion`).
+
+The first storm run **found a bug**: under a race for the same key, the losing request had already
+taken an incident number, so `INC-4` never existed. Deduplication was never wrong, but numbers had
+gaps; the loser now returns its number while it still holds the lock.
+
 ## Running locally
 
 **Everything in Docker** — only Docker needed:
@@ -431,9 +458,15 @@ drafts, escalation policies, webhooks, metrics, the simulator, the SSE stream, b
 health. Machine endpoints authenticate with `Authorization: Bearer ir_live_…`; everything else with
 the session cookie (or a Bearer session token for scripts).
 
+**OpenAPI 3.1**: served at [`GET /api/v1/openapi.json`](http://localhost:4000/api/v1/openapi.json)
+and committed as [docs/openapi.json](docs/openapi.json) — load it into Swagger UI, Postman or an
+OpenAPI client generator. Request bodies are generated from the same zod schemas the routes
+validate with, and a test fails if a route exists that the document doesn't list (or the committed
+file is stale: `npm run openapi`).
+
 ## Testing
 
-**357 tests**, most of them integration tests against a real Postgres and Redis (no mocks for the
+**367 tests**, most of them integration tests against a real Postgres and Redis (no mocks for the
 database) — strategy, coverage and what they found in [docs/testing.md](docs/testing.md).
 
 ```sh
@@ -443,6 +476,7 @@ npm run test:integration    # API + worker
 npm run test:coverage
 npm run lint && npm run typecheck
 npm run smoke               # end to end against a running stack
+npm run loadtest            # alert storm + latency percentiles against a running stack
 ```
 
 | Business rule | How it's tested |
@@ -450,6 +484,7 @@ npm run smoke               # end to end against a running stack
 | `triggered → acknowledged ✓` · `acknowledged → investigating ✓` · `investigating → resolved ✓` · `resolved → investigating ✗` | The table over HTTP (409, row unchanged), all 20 pairs, the API table vs the database trigger on all 25, 2,000 random walks |
 | 100 alerts with the same key → **1 incident, 100 attached alerts** | Sequentially *and* all 100 at once (one `incident_created`, 99 `grouped`, one page) |
 | Notification attempt 1 → failure, 2 → failure, **3 → success** | Real BullMQ workers with production job options; all-fail → dead-lettered once |
+| **400 alerts at once for 20 problems** → 20 incidents, 400 attached, one page each, gapless numbers | Two services, shuffled, all concurrent; plus 200 retried deliveries with `Idempotency-Key` recorded once |
 | **Org A cannot read Org B incidents** | 36 id-addressed routes called by Org B's admin with Org A's ids → all `404`; lists clean; the investigator's tools return nothing across tenants |
 
 Also: outages (the app built against a Redis and a Postgres that are down; backends killed
@@ -457,8 +492,8 @@ mid-flight), idempotency under concurrency, delivery leases, CSRF / brute force 
 injection, SSRF via DNS, the investigator's correlation engine, its agent loop against a scripted
 model (requests, tool results, citation checks, failure modes), AI-draft redaction and review gate,
 realtime replay, the SDK end to end over HTTP. Writing the tests found a deadlock, a crash on
-database restart, two `500`s that should have been `400`/`413`, and an inconsistent tenant check —
-all fixed.
+database restart, two `500`s that should have been `400`/`413`, an inconsistent tenant check and,
+under load, gaps in incident numbers — all fixed.
 
 ## CI/CD
 

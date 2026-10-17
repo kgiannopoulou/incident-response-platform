@@ -1,0 +1,4671 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Fireline — Incident Response Platform API",
+    "version": "1.0.0",
+    "description": "Alert ingestion, incident lifecycle, escalation, investigations and postmortems. Machine endpoints (alerts, deployments, logs) authenticate with a per-service API key; everything else with the session cookie or a Bearer session token. Prose reference: docs/api.md.",
+    "license": {
+      "name": "MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:4000/api/v1",
+      "description": "Local (docker compose / npm run dev:api)"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Ingestion"
+    },
+    {
+      "name": "Auth"
+    },
+    {
+      "name": "Alerts"
+    },
+    {
+      "name": "Telemetry"
+    },
+    {
+      "name": "Incidents"
+    },
+    {
+      "name": "Responders"
+    },
+    {
+      "name": "Investigations"
+    },
+    {
+      "name": "Postmortems"
+    },
+    {
+      "name": "Metrics"
+    },
+    {
+      "name": "Demo"
+    },
+    {
+      "name": "Services"
+    },
+    {
+      "name": "Escalation"
+    },
+    {
+      "name": "Webhooks"
+    },
+    {
+      "name": "Operations"
+    },
+    {
+      "name": "Organization"
+    },
+    {
+      "name": "Realtime"
+    },
+    {
+      "name": "Meta"
+    }
+  ],
+  "paths": {
+    "/alerts": {
+      "post": {
+        "tags": [
+          "Ingestion"
+        ],
+        "summary": "Ingest an alert (trigger or resolve); grouped by deduplication key",
+        "operationId": "postAlerts",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "action": {
+                    "default": "trigger",
+                    "type": "string",
+                    "enum": [
+                      "trigger",
+                      "resolve"
+                    ]
+                  },
+                  "service": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "severity": {
+                    "description": "INFO, WARNING, HIGH or CRITICAL (case-insensitive)",
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  },
+                  "description": {
+                    "default": "",
+                    "type": "string",
+                    "maxLength": 5000
+                  },
+                  "source": {
+                    "default": "api",
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "deduplicationKey": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 255
+                  },
+                  "metadata": {
+                    "default": {},
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlertAccepted"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "413": {
+            "$ref": "#/components/responses/E413"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429"
+          },
+          "503": {
+            "$ref": "#/components/responses/E503"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Alerts"
+        ],
+        "summary": "Alert feed, newest first (filters: serviceId, severity, status)",
+        "operationId": "getAlerts",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/deployments": {
+      "post": {
+        "tags": [
+          "Ingestion"
+        ],
+        "summary": "Report a deployment (CI/CD)",
+        "operationId": "postDeployments",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "commitSha": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{7,40}$"
+                  },
+                  "description": {
+                    "default": "",
+                    "type": "string",
+                    "maxLength": 2000
+                  },
+                  "author": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "environment": {
+                    "default": "production",
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 50
+                  },
+                  "status": {
+                    "default": "succeeded",
+                    "type": "string",
+                    "enum": [
+                      "in_progress",
+                      "succeeded",
+                      "failed",
+                      "rolled_back"
+                    ]
+                  },
+                  "kind": {
+                    "default": "deploy",
+                    "type": "string",
+                    "enum": [
+                      "deploy",
+                      "config",
+                      "rollback",
+                      "migration",
+                      "feature_flag"
+                    ]
+                  },
+                  "url": {
+                    "type": "string",
+                    "maxLength": 2000,
+                    "format": "uri"
+                  },
+                  "startedAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                  },
+                  "finishedAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                  },
+                  "metadata": {
+                    "default": {},
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "service": {
+                    "type": "string",
+                    "maxLength": 100
+                  }
+                },
+                "required": [
+                  "version"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "413": {
+            "$ref": "#/components/responses/E413"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429"
+          },
+          "503": {
+            "$ref": "#/components/responses/E503"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Telemetry"
+        ],
+        "summary": "Recent deployments (filter: serviceId)",
+        "operationId": "getDeployments",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/logs": {
+      "post": {
+        "tags": [
+          "Ingestion"
+        ],
+        "summary": "Send a batch of log events",
+        "operationId": "postLogs",
+        "security": [
+          {
+            "apiKey": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "service": {
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  "entries": {
+                    "minItems": 1,
+                    "maxItems": 500,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                        },
+                        "level": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4000
+                        },
+                        "attributes": {
+                          "default": {},
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "level",
+                        "message"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "entries"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "413": {
+            "$ref": "#/components/responses/E413"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429"
+          },
+          "503": {
+            "$ref": "#/components/responses/E503"
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Log in; sets the irp_session cookie and returns a token",
+        "operationId": "postAuthLogin",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email",
+                    "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "email",
+                  "password"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Clear the session cookie",
+        "operationId": "postAuthLogout",
+        "security": [],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          }
+        }
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "The current user",
+        "operationId": "getAuthMe",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/incidents": {
+      "get": {
+        "tags": [
+          "Incidents"
+        ],
+        "summary": "List incidents (filters: status, severity, serviceId)",
+        "operationId": "getIncidents",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Incidents"
+        ],
+        "summary": "Declare an incident manually",
+        "operationId": "postIncidents",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 200
+                  },
+                  "severity": {
+                    "type": "string",
+                    "enum": [
+                      "sev1",
+                      "sev2",
+                      "sev3",
+                      "sev4"
+                    ]
+                  },
+                  "serviceId": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "title",
+                  "severity"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/incidents/{number}": {
+      "get": {
+        "tags": [
+          "Incidents"
+        ],
+        "summary": "Incident with alerts, responders and pages",
+        "operationId": "getIncidentsByNumber",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/incidents/{number}/timeline": {
+      "get": {
+        "tags": [
+          "Incidents"
+        ],
+        "summary": "Append-only, hash-chained timeline with verification result",
+        "operationId": "getIncidentsByNumberTimeline",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/incidents/{number}/status": {
+      "post": {
+        "tags": [
+          "Incidents"
+        ],
+        "summary": "Move through the state machine (409 on an invalid transition)",
+        "operationId": "postIncidentsByNumberStatus",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "triggered",
+                      "acknowledged",
+                      "investigating",
+                      "mitigated",
+                      "resolved"
+                    ]
+                  },
+                  "message": {
+                    "type": "string",
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "status"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/incidents/{number}/acknowledge": {
+      "post": {
+        "tags": [
+          "Incidents"
+        ],
+        "summary": "Acknowledge; stops escalation and the ack timeout",
+        "operationId": "postIncidentsByNumberAcknowledge",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/incidents/{number}/escalate": {
+      "post": {
+        "tags": [
+          "Incidents"
+        ],
+        "summary": "Page the next escalation step now",
+        "operationId": "postIncidentsByNumberEscalate",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/incidents/{number}/severity": {
+      "post": {
+        "tags": [
+          "Incidents"
+        ],
+        "summary": "Change severity",
+        "operationId": "postIncidentsByNumberSeverity",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "severity": {
+                    "type": "string",
+                    "enum": [
+                      "sev1",
+                      "sev2",
+                      "sev3",
+                      "sev4"
+                    ]
+                  }
+                },
+                "required": [
+                  "severity"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/incidents/{number}/notes": {
+      "post": {
+        "tags": [
+          "Incidents"
+        ],
+        "summary": "Add a note to the timeline",
+        "operationId": "postIncidentsByNumberNotes",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "message": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 5000
+                  }
+                },
+                "required": [
+                  "message"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/incidents/{number}/responders": {
+      "post": {
+        "tags": [
+          "Responders"
+        ],
+        "summary": "Add a responder (commander, responder or observer)",
+        "operationId": "postIncidentsByNumberResponders",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "userId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "role": {
+                    "default": "responder",
+                    "type": "string",
+                    "enum": [
+                      "commander",
+                      "responder",
+                      "observer"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/incidents/{number}/responders/{userId}": {
+      "patch": {
+        "tags": [
+          "Responders"
+        ],
+        "summary": "Change a responder's role (hand over command)",
+        "operationId": "patchIncidentsByNumberRespondersByUserId",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "commander",
+                      "responder",
+                      "observer"
+                    ]
+                  }
+                },
+                "required": [
+                  "role"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Responders"
+        ],
+        "summary": "Remove a responder",
+        "operationId": "deleteIncidentsByNumberRespondersByUserId",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/incidents/{number}/investigations": {
+      "get": {
+        "tags": [
+          "Investigations"
+        ],
+        "summary": "The incident's investigations and their findings",
+        "operationId": "getIncidentsByNumberInvestigations",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Investigations"
+        ],
+        "summary": "Start an investigation (agent or offline rules)",
+        "operationId": "postIncidentsByNumberInvestigations",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/incidents/{number}/investigations/{id}/hypotheses/{hid}/post": {
+      "post": {
+        "tags": [
+          "Investigations"
+        ],
+        "summary": "Post a hypothesis to the timeline as an unconfirmed note",
+        "operationId": "postIncidentsByNumberInvestigationsByIdHypothesesByHidPost",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "hid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/postmortems": {
+      "get": {
+        "tags": [
+          "Postmortems"
+        ],
+        "summary": "All postmortems",
+        "operationId": "getPostmortems",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/incidents/{number}/postmortem": {
+      "get": {
+        "tags": [
+          "Postmortems"
+        ],
+        "summary": "The incident's postmortem",
+        "operationId": "getIncidentsByNumberPostmortem",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Postmortems"
+        ],
+        "summary": "Create the postmortem draft from the timeline",
+        "operationId": "postIncidentsByNumberPostmortem",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Postmortems"
+        ],
+        "summary": "Edit, publish or reopen",
+        "operationId": "putIncidentsByNumberPostmortem",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "summary": {
+                    "type": "string",
+                    "maxLength": 10000
+                  },
+                  "impact": {
+                    "type": "string",
+                    "maxLength": 10000
+                  },
+                  "rootCause": {
+                    "type": "string",
+                    "maxLength": 10000
+                  },
+                  "resolution": {
+                    "type": "string",
+                    "maxLength": 10000
+                  },
+                  "whatWentWell": {
+                    "type": "string",
+                    "maxLength": 10000
+                  },
+                  "whatWentPoorly": {
+                    "type": "string",
+                    "maxLength": 10000
+                  },
+                  "actionItems": {
+                    "maxItems": 50,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "pattern": "^ai_[a-z0-9]{4,32}$"
+                        },
+                        "description": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        },
+                        "owner": {
+                          "default": "",
+                          "type": "string",
+                          "maxLength": 100
+                        },
+                        "dueDate": {
+                          "default": null,
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "date",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "done": {
+                          "default": false,
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "description"
+                      ]
+                    }
+                  },
+                  "hiddenTimelineEventIds": {
+                    "maxItems": 500,
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "draft",
+                      "published"
+                    ]
+                  },
+                  "aiReviewed": {
+                    "type": "boolean",
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/incidents/{number}/postmortem/markdown": {
+      "get": {
+        "tags": [
+          "Postmortems"
+        ],
+        "summary": "Postmortem as Markdown",
+        "operationId": "getIncidentsByNumberPostmortemMarkdown",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/markdown": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/incidents/{number}/postmortem/action-items/{itemId}": {
+      "patch": {
+        "tags": [
+          "Postmortems"
+        ],
+        "summary": "Update an action item",
+        "operationId": "patchIncidentsByNumberPostmortemActionItemsByItemId",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "itemId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "done": {
+                    "type": "boolean"
+                  },
+                  "owner": {
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  "dueDate": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "date",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/incidents/{number}/postmortem/ai-drafts": {
+      "get": {
+        "tags": [
+          "Postmortems"
+        ],
+        "summary": "AI drafts for this postmortem",
+        "operationId": "getIncidentsByNumberPostmortemAiDrafts",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Postmortems"
+        ],
+        "summary": "Request an AI draft (worker job)",
+        "operationId": "postIncidentsByNumberPostmortemAiDrafts",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/incidents/{number}/postmortem/ai-drafts/{draftId}/apply": {
+      "post": {
+        "tags": [
+          "Postmortems"
+        ],
+        "summary": "Apply selected sections of a draft (needs review)",
+        "operationId": "postIncidentsByNumberPostmortemAiDraftsByDraftIdApply",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "draftId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "sections": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "summary",
+                        "impact",
+                        "rootCause",
+                        "resolution",
+                        "whatWentWell",
+                        "whatWentPoorly",
+                        "actionItems"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "sections"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/incidents/{number}/postmortem/ai-drafts/{draftId}/discard": {
+      "post": {
+        "tags": [
+          "Postmortems"
+        ],
+        "summary": "Discard a draft",
+        "operationId": "postIncidentsByNumberPostmortemAiDraftsByDraftIdDiscard",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "draftId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": [
+          "Metrics"
+        ],
+        "summary": "MTTA / MTTR per day, service and severity",
+        "operationId": "getMetrics",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/demo": {
+      "get": {
+        "tags": [
+          "Demo"
+        ],
+        "summary": "State of the incident simulation",
+        "operationId": "getDemo",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/demo/simulate": {
+      "post": {
+        "tags": [
+          "Demo"
+        ],
+        "summary": "Simulate a production incident",
+        "operationId": "postDemoSimulate",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "description": "Requires the admin role.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "speed": {
+                    "default": 1,
+                    "type": "number"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/services": {
+      "get": {
+        "tags": [
+          "Services"
+        ],
+        "summary": "Services with status and open incidents",
+        "operationId": "getServices",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Services"
+        ],
+        "summary": "Create a service",
+        "operationId": "postServices",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "description": "Requires the admin role.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 100
+                  },
+                  "slug": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+                  },
+                  "description": {
+                    "default": "",
+                    "type": "string",
+                    "maxLength": 500
+                  },
+                  "teamId": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "escalationPolicyId": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "autoResolve": {
+                    "default": false,
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "name"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/services/{id}": {
+      "patch": {
+        "tags": [
+          "Services"
+        ],
+        "summary": "Update a service (policy, maintenance window)",
+        "operationId": "patchServicesById",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "description": "Requires the admin role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "description": {
+                    "type": "string",
+                    "maxLength": 500
+                  },
+                  "maintenance": {
+                    "type": "boolean"
+                  },
+                  "autoResolve": {
+                    "type": "boolean"
+                  },
+                  "escalationPolicyId": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/services/{id}/keys": {
+      "get": {
+        "tags": [
+          "Services"
+        ],
+        "summary": "The service's API keys (prefixes only)",
+        "operationId": "getServicesByIdKeys",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "description": "Requires the admin role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Services"
+        ],
+        "summary": "Create an API key (the secret is shown once)",
+        "operationId": "postServicesByIdKeys",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "description": "Requires the admin role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "default": "Default",
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "rateLimitPerMinute": {
+                    "default": 120,
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/services/{id}/keys/{keyId}/rotate": {
+      "post": {
+        "tags": [
+          "Services"
+        ],
+        "summary": "Rotate a key with a grace period",
+        "operationId": "postServicesByIdKeysByKeyIdRotate",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "description": "Requires the admin role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "keyId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "graceMinutes": {
+                    "default": 60,
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 10080
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/services/{id}/keys/{keyId}/revoke": {
+      "post": {
+        "tags": [
+          "Services"
+        ],
+        "summary": "Revoke a key",
+        "operationId": "postServicesByIdKeysByKeyIdRevoke",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "description": "Requires the admin role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "keyId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/services/{id}/rules": {
+      "get": {
+        "tags": [
+          "Services"
+        ],
+        "summary": "Alert matching rules",
+        "operationId": "getServicesByIdRules",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Services"
+        ],
+        "summary": "Replace alert matching rules",
+        "operationId": "putServicesByIdRules",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "description": "Requires the admin role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "rules": {
+                    "maxItems": 50,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100
+                        },
+                        "conditions": {
+                          "maxItems": 10,
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "field": {
+                                "type": "string",
+                                "enum": [
+                                  "severity",
+                                  "source",
+                                  "title",
+                                  "description"
+                                ]
+                              },
+                              "op": {
+                                "type": "string",
+                                "enum": [
+                                  "equals",
+                                  "contains",
+                                  "at_least"
+                                ]
+                              },
+                              "value": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "required": [
+                              "field",
+                              "op",
+                              "value"
+                            ]
+                          }
+                        },
+                        "action": {
+                          "type": "string",
+                          "enum": [
+                            "create_incident",
+                            "suppress"
+                          ]
+                        },
+                        "incidentSeverity": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "sev1",
+                                "sev2",
+                                "sev3",
+                                "sev4"
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "conditions",
+                        "action"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "rules"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/services/{id}/dependencies": {
+      "get": {
+        "tags": [
+          "Services"
+        ],
+        "summary": "Upstream dependencies (for the investigator)",
+        "operationId": "getServicesByIdDependencies",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Services"
+        ],
+        "summary": "Replace upstream dependencies",
+        "operationId": "putServicesByIdDependencies",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "description": "Requires the admin role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "dependsOn": {
+                    "maxItems": 50,
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  }
+                },
+                "required": [
+                  "dependsOn"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/escalation-policies": {
+      "get": {
+        "tags": [
+          "Escalation"
+        ],
+        "summary": "Escalation policies",
+        "operationId": "getEscalationPolicies",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Escalation"
+        ],
+        "summary": "Create a policy",
+        "operationId": "postEscalationPolicies",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "description": "Requires the admin role.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 100
+                  },
+                  "description": {
+                    "default": "",
+                    "type": "string",
+                    "maxLength": 500
+                  },
+                  "ackTimeoutMinutes": {
+                    "default": null,
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1440
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "steps": {
+                    "minItems": 1,
+                    "maxItems": 10,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "delayMinutes": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 1440
+                        },
+                        "targets": {
+                          "minItems": 1,
+                          "maxItems": 10,
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "targetType": {
+                                "type": "string",
+                                "enum": [
+                                  "user",
+                                  "team"
+                                ]
+                              },
+                              "targetId": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991
+                              }
+                            },
+                            "required": [
+                              "targetType",
+                              "targetId"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "delayMinutes",
+                        "targets"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "name",
+                  "steps"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/escalation-policies/{id}": {
+      "get": {
+        "tags": [
+          "Escalation"
+        ],
+        "summary": "One policy with its steps",
+        "operationId": "getEscalationPoliciesById",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Escalation"
+        ],
+        "summary": "Replace a policy",
+        "operationId": "putEscalationPoliciesById",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "description": "Requires the admin role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 100
+                  },
+                  "description": {
+                    "default": "",
+                    "type": "string",
+                    "maxLength": 500
+                  },
+                  "ackTimeoutMinutes": {
+                    "default": null,
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1440
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "steps": {
+                    "minItems": 1,
+                    "maxItems": 10,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "delayMinutes": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 1440
+                        },
+                        "targets": {
+                          "minItems": 1,
+                          "maxItems": 10,
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "targetType": {
+                                "type": "string",
+                                "enum": [
+                                  "user",
+                                  "team"
+                                ]
+                              },
+                              "targetId": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991
+                              }
+                            },
+                            "required": [
+                              "targetType",
+                              "targetId"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "delayMinutes",
+                        "targets"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "name",
+                  "steps"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Escalation"
+        ],
+        "summary": "Delete an unused policy",
+        "operationId": "deleteEscalationPoliciesById",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "description": "Requires the admin role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/webhooks": {
+      "get": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Webhook endpoints",
+        "operationId": "getWebhooks",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "description": "Requires the admin role.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Create an endpoint (the signing secret is shown once)",
+        "operationId": "postWebhooks",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "description": "Requires the admin role.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "maxLength": 2000,
+                    "format": "uri"
+                  },
+                  "description": {
+                    "default": "",
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "events": {
+                    "default": [
+                      "incident.triggered",
+                      "incident.acknowledged",
+                      "incident.escalated",
+                      "incident.resolved"
+                    ],
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "incident.triggered",
+                        "incident.acknowledged",
+                        "incident.escalated",
+                        "incident.resolved"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "url"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/webhooks/{id}": {
+      "patch": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Update an endpoint",
+        "operationId": "patchWebhooksById",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "description": "Requires the admin role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "maxLength": 2000,
+                    "format": "uri"
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "events": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "incident.triggered",
+                        "incident.acknowledged",
+                        "incident.escalated",
+                        "incident.resolved"
+                      ]
+                    }
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Delete an endpoint",
+        "operationId": "deleteWebhooksById",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "description": "Requires the admin role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/webhooks/{id}/rotate-secret": {
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Rotate the signing secret",
+        "operationId": "postWebhooksByIdRotateSecret",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "description": "Requires the admin role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/webhooks/{id}/test": {
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Send a signed test event",
+        "operationId": "postWebhooksByIdTest",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "description": "Requires the admin role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/webhooks/{id}/deliveries": {
+      "get": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Delivery log",
+        "operationId": "getWebhooksByIdDeliveries",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "description": "Requires the admin role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/webhooks/deliveries/{id}/redeliver": {
+      "post": {
+        "tags": [
+          "Webhooks"
+        ],
+        "summary": "Redeliver one delivery",
+        "operationId": "postWebhooksDeliveriesByIdRedeliver",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "description": "Requires the admin role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/admin/queues": {
+      "get": {
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Job counts per queue and live workers",
+        "operationId": "getAdminQueues",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "description": "Requires the admin role.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/admin/ingestion": {
+      "get": {
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Alert ingestion throughput and latency percentiles (this API process)",
+        "operationId": "getAdminIngestion",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "description": "Requires the admin role.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestionStats"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/admin/dead-letter": {
+      "get": {
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Jobs that used up their retries",
+        "operationId": "getAdminDeadLetter",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "description": "Requires the admin role.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/admin/dead-letter/{id}/retry": {
+      "post": {
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Put a dead letter back on its queue",
+        "operationId": "postAdminDeadLetterByIdRetry",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "description": "Requires the admin role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/admin/dead-letter/{id}": {
+      "delete": {
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Discard a dead letter",
+        "operationId": "deleteAdminDeadLetterById",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "description": "Requires the admin role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No content"
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/users": {
+      "get": {
+        "tags": [
+          "Organization"
+        ],
+        "summary": "Users in the organization",
+        "operationId": "getUsers",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/teams": {
+      "get": {
+        "tags": [
+          "Organization"
+        ],
+        "summary": "Teams and members",
+        "operationId": "getTeams",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/audit-log": {
+      "get": {
+        "tags": [
+          "Organization"
+        ],
+        "summary": "Organization audit log (paged with ?before=)",
+        "operationId": "getAuditLog",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "description": "Requires the admin role.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/stats": {
+      "get": {
+        "tags": [
+          "Organization"
+        ],
+        "summary": "Dashboard counters",
+        "operationId": "getStats",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/stream": {
+      "get": {
+        "tags": [
+          "Realtime"
+        ],
+        "summary": "Server-Sent Events stream; resumes from Last-Event-ID",
+        "operationId": "getStream",
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "sessionToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/event-stream": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409"
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "tags": [
+          "Meta"
+        ],
+        "summary": "This document",
+        "operationId": "getOpenapiJson",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "apiKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Per-service integration key: Authorization: Bearer ir_live_…"
+      },
+      "sessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "irp_session"
+      },
+      "sessionToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "The token returned by POST /auth/login"
+      }
+    },
+    "responses": {
+      "E400": {
+        "description": "Invalid request",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "E401": {
+        "description": "Not authenticated",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "E403": {
+        "description": "Not allowed",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "E404": {
+        "description": "Not found (also for other organizations' resources)",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "E409": {
+        "description": "Conflicts with the current state",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "E413": {
+        "description": "Body too large",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "E429": {
+        "description": "Rate limited; see Retry-After",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "E503": {
+        "description": "Postgres unavailable; retry after Retry-After",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "details": {
+            "description": "Validation issues (400 only)"
+          }
+        }
+      },
+      "AlertAccepted": {
+        "type": "object",
+        "required": [
+          "id",
+          "status",
+          "receivedAt",
+          "service",
+          "deduplicationKey",
+          "decision"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "examples": [
+              "alert_01M4V1JQA6G5TKEBVMPF8Z6DPZ"
+            ]
+          },
+          "status": {
+            "enum": [
+              "triggered",
+              "suppressed",
+              "resolved"
+            ]
+          },
+          "receivedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "service": {
+            "type": "string"
+          },
+          "deduplicationKey": {
+            "type": "string"
+          },
+          "decision": {
+            "enum": [
+              "incident_created",
+              "grouped",
+              "recorded",
+              "suppressed",
+              "maintenance",
+              "resolved"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "incident": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "number": {
+                "type": "integer"
+              },
+              "status": {
+                "type": "string"
+              },
+              "severity": {
+                "type": "string"
+              },
+              "alertCount": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "IngestionStats": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "windowSeconds": {
+            "type": "integer"
+          },
+          "coveredSeconds": {
+            "type": "integer"
+          },
+          "count": {
+            "type": "integer"
+          },
+          "perSecond": {
+            "type": "number"
+          },
+          "errors": {
+            "type": "integer"
+          },
+          "latencyMs": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "p50": {
+                "type": "number"
+              },
+              "p95": {
+                "type": "number"
+              },
+              "p99": {
+                "type": "number"
+              },
+              "max": {
+                "type": "number"
+              }
+            }
+          },
+          "decisions": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "sinceStart": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer"
+              },
+              "errors": {
+                "type": "integer"
+              },
+              "startedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,6 +1,7 @@
 import type { Pool } from "pg";
 import type { Queue } from "bullmq";
 import type { Redis } from "ioredis";
+import type { IngestionStats } from "./lib/ingestion-stats";
 import type { LoginThrottle, RateLimiter } from "./lib/rate-limit";
 import type { RealtimeHub } from "./lib/realtime";
 
@@ -21,6 +22,9 @@ export type Deps = {
   // Express "trust proxy" setting, so req.ip (used for auth-failure rate
   // limiting) is the real client behind a load balancer. Off by default.
   trustProxy?: boolean | number | string;
+  // Latency / throughput of POST /alerts in this process; createApp makes one
+  // when not given (tests pass their own to inspect it).
+  ingestionStats?: IngestionStats;
   // "Simulate production incident" (routes/demo.ts). timeScale = ms per
   // scenario second; tests set 0 to play every step at once.
   demo?: { enabled: boolean; timeScale?: number };

@@ -1,6 +1,6 @@
 # Testing
 
-357 tests across five workspaces. Most of them are **integration tests against a real Postgres and
+367 tests across five workspaces. Most of them are **integration tests against a real Postgres and
 Redis**: a test database (`incidents_test`, created and migrated automatically) and separate Redis
 logical databases, so transactions, row locks, triggers, unique indexes and BullMQ behave exactly as
 in production. Nothing about the database is mocked.
@@ -16,7 +16,7 @@ npm test -w @irp/api -- business-rules      # one file
 
 | Workspace | Tests | Kind | Statements | Branches | Lines |
 | --- | ---: | --- | ---: | ---: | ---: |
-| `apps/api` | 183 | integration (HTTP via supertest, real DB/Redis) | 92% | 83% | 95% |
+| `apps/api` | 193 | integration (HTTP via supertest, real DB/Redis) | 92% | 83% | 95% |
 | `apps/worker` | 54 | integration (real BullMQ workers, scripted model client) | 86% | 71% | 89% |
 | `packages/shared` | 90 | unit (pure domain logic, investigator engine) | 92% | 73% | 93% |
 | `packages/alert-sdk` | 23 | unit (fake `fetch`, Web Crypto verifier) + end-to-end in `apps/api` | 83% | 80% | 87% |

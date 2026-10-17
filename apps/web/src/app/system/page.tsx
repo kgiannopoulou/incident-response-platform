@@ -21,6 +21,17 @@ type DeadLetter = {
   failedAt: string;
 };
 
+type Ingestion = {
+  windowSeconds: number;
+  coveredSeconds: number;
+  count: number;
+  perSecond: number;
+  errors: number;
+  latencyMs: { p50: number; p95: number; p99: number; max: number } | null;
+  decisions: Record<string, number>;
+  sinceStart: { count: number; errors: number; startedAt: string };
+} | null;
+
 const QUEUE_HELP: Record<string, string> = {
   notifications: "Email pages â€” 5 attempts, exponential backoff (2 s â†’ 16 s)",
   escalations: "incident-created + delayed escalation steps",
@@ -37,17 +48,20 @@ export default function SystemPage() {
   const now = useNow(5000);
   const queues = useApi<{ queues: QueueInfo[]; workers: WorkerInfo[] }>(user?.role === "admin" ? "/admin/queues" : null);
   const dead = useApi<{ entries: DeadLetter[] }>(user?.role === "admin" ? "/admin/dead-letter" : null);
+  const ingestion = useApi<Ingestion>(user?.role === "admin" ? "/admin/ingestion" : null);
   const [error, setError] = useState<string | null>(null);
   const { reload: reloadQueues } = queues;
   const { reload: reloadDead } = dead;
+  const { reload: reloadIngestion } = ingestion;
 
   useEffect(() => {
     const timer = setInterval(() => {
       reloadQueues();
       reloadDead();
+      reloadIngestion();
     }, 5000);
     return () => clearInterval(timer);
-  }, [reloadQueues, reloadDead]);
+  }, [reloadQueues, reloadDead, reloadIngestion]);
 
   async function act(fn: () => Promise<unknown>) {
     setError(null);
@@ -71,6 +85,8 @@ export default function SystemPage() {
         </p>
       </div>
       {error && <ErrorState message={error} />}
+
+      <IngestionCard data={ingestion.data ?? null} />
 
       {queues.error ? (
         <ErrorState message={queues.error} onRetry={queues.reload} />
@@ -175,5 +191,50 @@ export default function SystemPage() {
         )}
       </Card>
     </div>
+  );
+}
+
+// Alert ingestion as this API process measured it (lib/ingestion-stats.ts):
+// throughput and latency of POST /alerts over the last 5 minutes.
+function IngestionCard({ data }: { data: Ingestion }) {
+  const tiles: [string, string][] = data
+    ? [
+        ["Alerts (5 min)", String(data.count)],
+        ["Throughput", `${data.perSecond}/s`],
+        ["p50", data.latencyMs ? `${data.latencyMs.p50} ms` : "–"],
+        ["p95", data.latencyMs ? `${data.latencyMs.p95} ms` : "–"],
+        ["p99", data.latencyMs ? `${data.latencyMs.p99} ms` : "–"],
+        ["5xx", String(data.errors)],
+      ]
+    : [];
+  return (
+    <Card title="Alert ingestion">
+      <p className="mb-3 text-xs text-zinc-500">
+        <code>POST /api/v1/alerts</code> latency from arrival to response, measured by this API process. Load-test it with{" "}
+        <code>npm run loadtest</code>.
+      </p>
+      {!data ? (
+        <Empty>No data yet.</Empty>
+      ) : (
+        <>
+          <dl className="grid grid-cols-3 gap-2 text-center md:grid-cols-6">
+            {tiles.map(([label, value]) => (
+              <div key={label} className="rounded bg-zinc-950/60 py-1.5">
+                <dt className="text-[10px] uppercase tracking-wide text-zinc-500">{label}</dt>
+                <dd className={cx("font-mono text-lg", label === "5xx" && data.errors > 0 ? "text-red-300" : "text-zinc-100")}>{value}</dd>
+              </div>
+            ))}
+          </dl>
+          {Object.keys(data.decisions).length > 0 && (
+            <p className="mt-3 text-xs text-zinc-400">
+              {Object.entries(data.decisions)
+                .sort((a, b) => b[1] - a[1])
+                .map(([decision, n]) => `${decision} ${n}`)
+                .join(" · ")}
+            </p>
+          )}
+        </>
+      )}
+    </Card>
   );
 }

@@ -19,6 +19,7 @@ import { TimeoutError, withTimeout } from "../lib/resilience";
 // Operations view of the background machinery (admins only):
 //
 //   GET    /admin/queues                 job counts per queue + live workers
+//   GET    /admin/ingestion              alert ingestion latency / throughput (this API process)
 //   GET    /admin/dead-letter            jobs that exhausted their retries
 //   POST   /admin/dead-letter/:id/retry  put one back on its original queue
 //   DELETE /admin/dead-letter/:id        discard it
@@ -70,6 +71,13 @@ export function adminRouter(deps: Deps) {
       }))
     ));
     res.json({ queues, workers: await redisCall(liveWorkers(deps)) });
+  });
+
+  // In-memory, so it answers even while Redis is down (unlike /queues).
+  router.get("/ingestion", (req, res) => {
+    const window = Number(req.query.window ?? 300);
+    if (!Number.isInteger(window) || window < 10 || window > 3600) throw new HttpError(400, "window must be 10-3600 seconds");
+    res.json(deps.ingestionStats?.summary(window) ?? null);
   });
 
   router.get("/dead-letter", async (req, res) => {

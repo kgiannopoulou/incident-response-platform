@@ -68,12 +68,24 @@ function idempotencyFrom(req: Request) {
   return { key, requestHash: createHash("sha256").update(JSON.stringify(req.body ?? null)).digest("hex") };
 }
 
+// Times every ingestion request, rejected ones included, from arrival to the
+// response being handed to the socket (System page, load test).
+function timeIngestion(deps: Deps) {
+  return (_req: Request, res: Response, next: NextFunction) => {
+    const stats = deps.ingestionStats;
+    if (!stats) return next();
+    const started = performance.now();
+    res.on("finish", () => stats.record(performance.now() - started, res.statusCode, res.locals.decision ?? null));
+    next();
+  };
+}
+
 export function alertsRouter(deps: Deps) {
   const router = Router();
 
   // Ingestion endpoint. 202 Accepted: the alert is stored and its incident
   // decided synchronously, but paging happens asynchronously in the worker.
-  router.post("/", requireApiKey(deps), async (req, res) => {
+  router.post("/", timeIngestion(deps), requireApiKey(deps), async (req, res) => {
     const payload = alertPayloadSchema.parse(req.body);
     const { service } = req.apiKey!;
     // The key decides the service. A body naming a different one is
@@ -82,6 +94,7 @@ export function alertsRouter(deps: Deps) {
       throw new HttpError(403, `This API key belongs to service "${service.slug}", not "${payload.service}"`);
     }
     const result = await ingestAlert(deps, service, req.apiKey!.keyId, payload, idempotencyFrom(req));
+    res.locals.decision = result.decision;
     if (result.replayed) res.setHeader("Idempotent-Replayed", "true");
     res.status(202).json(result);
   });

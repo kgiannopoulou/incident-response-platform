@@ -34,7 +34,7 @@ import { HttpError } from "../lib/http";
 // the remaining steps are lost, which is fine for a demo; anything already
 // ingested is in Postgres like any other alert. Disable with DEMO_ENABLED=false.
 
-const bodySchema = z.object({
+export const demoBodySchema = z.object({
   speed: z.coerce
     .number()
     .refine((s) => (DEMO_SPEEDS as readonly number[]).includes(s), "speed must be 1, 2 or 5")
@@ -135,7 +135,7 @@ export function demoRouter(deps: Deps) {
 
   router.post("/simulate", requireAdmin, async (req, res) => {
     if (!enabled) throw new HttpError(404, "The simulator is disabled on this installation");
-    const { speed } = bodySchema.parse(req.body ?? {});
+    const { speed } = demoBodySchema.parse(req.body ?? {});
     const orgId = req.user!.organizationId;
     const scenario = PRODUCTION_INCIDENT;
     const state: DemoRunState = {

@@ -42,6 +42,7 @@ const app = createApp({
   webOrigin: env.webOrigin,
   secureCookies: env.secureCookies,
   trustProxy: env.trustProxy,
+  floodGuardPerMinute: env.floodGuardPerMinute,
   demo: { enabled: env.demoEnabled },
 });
 

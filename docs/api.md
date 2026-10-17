@@ -1,6 +1,7 @@
 # API reference
 
-Base URL: `http://localhost:4000/api/v1`. JSON in and out. Errors are `{ "error": "message" }`
+Base URL: `http://localhost:4000/api/v1`. JSON in and out. Machine-readable:
+[`openapi.json`](openapi.json) (OpenAPI 3.1, also served at `GET /api/v1/openapi.json`). Errors are `{ "error": "message" }`
 (validation errors add `details`).
 
 Authentication:
@@ -381,6 +382,7 @@ retried 5 times (5 s → 40 s backoff); `410 Gone` disables the endpoint.
 | Method | Path | Notes |
 | --- | --- | --- |
 | GET | `/admin/queues` | Counts per queue (`notifications`, `escalations`, `webhooks`, `dead-letter`) by state, plus `workers`: live worker heartbeats (`id`, `startedAt`, `lastSeenAt`, `processed`, `failed`, `deadLettered`) |
+| GET | `/admin/ingestion?window=300` | Alert ingestion measured by this API process over the last `window` seconds (10-3600): `count`, `perSecond`, `errors` (5xx), `latencyMs` (`p50`, `p95`, `p99`, `max`), `decisions` (count per ingestion decision), `sinceStart`. In memory, so it answers while Redis is down. See [benchmarks.md](benchmarks.md) |
 | GET | `/admin/dead-letter` | Jobs that used up every retry, for your organization: original `queue`, `name`, `jobId`, `data`, `failedReason`, `attemptsMade`, `failedAt` |
 | POST | `/admin/dead-letter/:id/retry` | Re-enqueue on the original queue (a failed page's notification row, or webhook delivery row, is reset to `queued` first). `409` if the page is no longer failed |
 | DELETE | `/admin/dead-letter/:id` | Discard |

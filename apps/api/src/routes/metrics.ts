@@ -14,7 +14,7 @@ import type { Deps } from "../deps";
 // plus medians/p90 so one 9-hour outlier doesn't hide a good month. All
 // computed in Postgres from the timestamps the state machine sets.
 
-const querySchema = z.object({
+export const metricsQuerySchema = z.object({
   days: z.coerce
     .number()
     .refine((d) => [7, 30, 90].includes(d), "days must be 7, 30 or 90")
@@ -40,7 +40,7 @@ export function metricsRouter(deps: Deps) {
   const router = Router();
 
   router.get("/", async (req, res) => {
-    const { days } = querySchema.parse(req.query);
+    const { days } = metricsQuerySchema.parse(req.query);
     const params = [req.user!.organizationId, days];
 
     const [summary, previous, bySeverity, byService, daily, active] = await Promise.all([

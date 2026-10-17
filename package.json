@@ -16,6 +16,8 @@
     "stack:up": "docker compose up -d --build --wait",
     "stack:down": "docker compose down",
     "smoke": "node scripts/smoke-test.mjs",
+    "loadtest": "node scripts/load-test.mjs",
+    "openapi": "npm run openapi -w @irp/api",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "eslint && npm run lint -w @irp/web",
     "test": "npm run test --workspaces --if-present",

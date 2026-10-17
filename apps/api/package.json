@@ -8,6 +8,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "typecheck": "tsc -p .",
+    "openapi": "tsx scripts/write-openapi.ts",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage --coverage.include=src --coverage.reporter=text-summary --coverage.reporter=json-summary --coverage.exclude=src/index.ts"
   },

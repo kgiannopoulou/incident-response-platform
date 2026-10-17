@@ -19,6 +19,9 @@ export const env = {
   secureCookies: process.env.COOKIE_SECURE === "true",
   // Failed API-key authentications allowed per client IP per minute.
   authFailuresPerMinute: Number(process.env.AUTH_FAILURES_PER_MINUTE ?? 20),
+  // Requests per minute per credential (or IP) across the API, before the
+  // per-key alert limits. Raise it for load tests (scripts/load-test.mjs).
+  floodGuardPerMinute: Number(process.env.FLOOD_GUARD_PER_MINUTE ?? 1200),
   // The dashboard's incident simulator; turn off on a real installation.
   demoEnabled: process.env.DEMO_ENABLED !== "false",
   // e.g. "1" behind one reverse proxy; unset = use the socket address.

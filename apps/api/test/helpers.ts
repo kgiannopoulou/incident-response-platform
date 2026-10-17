@@ -5,6 +5,7 @@ import { resetFixtures, setupTestDatabase, TEST_PASSWORD, type Fixtures } from "
 import { QUEUES } from "@irp/shared";
 import { createApp } from "../src/app";
 import type { Deps } from "../src/deps";
+import { IngestionStats } from "../src/lib/ingestion-stats";
 import { LoginThrottle, RateLimiter } from "../src/lib/rate-limit";
 import { RealtimeHub } from "../src/lib/realtime";
 
@@ -44,6 +45,7 @@ export async function createTestContext() {
     webOrigin: "http://localhost:3000",
     secureCookies: false,
     demo: { enabled: true, timeScale: 0 },
+    ingestionStats: new IngestionStats(),
   };
   const app = createApp(deps);
   let fixtures!: Fixtures;

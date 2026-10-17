@@ -18,7 +18,12 @@ import { AI_SECTIONS } from "./ai-postmortem";
 // `action` defaults to "trigger"; `action: "resolve"` clears every triggered
 // alert with the same deduplication key (PagerDuty Events API style).
 // Severity is case-insensitive: "CRITICAL" and "critical" are the same.
-const alertSeverity = z.string().trim().toLowerCase().pipe(z.enum(ALERT_SEVERITIES));
+const alertSeverity = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .pipe(z.enum(ALERT_SEVERITIES))
+  .describe("INFO, WARNING, HIGH or CRITICAL (case-insensitive)");
 
 export const alertPayloadSchema = z
   .object({
