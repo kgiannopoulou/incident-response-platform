@@ -16,7 +16,7 @@
     "@irp/database": "*",
     "@irp/shared": "*",
     "bcryptjs": "^3.0.2",
-    "bullmq": "^5.58.0",
+    "bullmq": "^6.3.13",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "express": "^5.1.0",
