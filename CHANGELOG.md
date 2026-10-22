@@ -6,20 +6,20 @@ All notable changes to Fireline are documented here. The format follows
 
 ## [Unreleased]
 
-### Added
-- README: production considerations, 100× scale notes and honest limitations.
-- MIT licence, `CONTRIBUTING.md` and this changelog.
-
-## [1.1.0] - 2026-10-17
+Planned as **1.1.0**.
 
 ### Added
 - OpenAPI 3.1 specification (`docs/openapi.json`).
 - Alert-storm load test (`npm run loadtest`) with latency percentiles, and live ingestion
   throughput/latency on the System page (`GET /api/v1/admin/ingestion`).
+- README: production considerations, 100× scale notes and honest limitations.
+- MIT licence, `CONTRIBUTING.md` and this changelog.
 
 ### Fixed
 - Incident numbers stay gapless when two requests race for the same deduplication key
   (found by the first load-test run).
+- The web app's System page contained stray Windows-1252 bytes, which broke `next build`
+  under Turbopack; the file is now valid UTF-8.
 
 ## [1.0.0] - 2026-10-16
 
@@ -41,6 +41,5 @@ First complete release: phases 1–25 plus the AI Incident Investigator.
 ### Fixed
 - A deadlock under alert bursts (found by the business-rule tests).
 
-[Unreleased]: https://github.com/kgiannopoulou/incident-response-platform/compare/v1.1.0...HEAD
-[1.1.0]: https://github.com/kgiannopoulou/incident-response-platform/compare/v1.0.0...v1.1.0
+[Unreleased]: https://github.com/kgiannopoulou/incident-response-platform/compare/v1.0.0...HEAD
 [1.0.0]: https://github.com/kgiannopoulou/incident-response-platform/releases/tag/v1.0.0
