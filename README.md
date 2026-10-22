@@ -77,7 +77,8 @@ BullMQ, Next.js 16 / React 19, Tailwind 4, zod, Anthropic SDK, Vitest, Docker Co
 [Background jobs](#background-jobs) · [Real-time](#real-time-architecture) · [AI](#ai-used-carefully) ·
 [Database](#database-design) · [Security](#security) · [Failure handling](#failure-handling) ·
 [Performance](#performance-under-load) · [Running locally](#running-locally) · [API](#api-documentation) · [Testing](#testing) ·
-[CI/CD](#cicd) · [Engineering decisions](#engineering-decisions)
+[CI/CD](#cicd) · [Engineering decisions](#engineering-decisions) ·
+[Production considerations](#production-considerations) · [Limitations](#scope-and-honest-limitations)
 
 ## Features
 
@@ -559,6 +560,51 @@ deployment, which log pattern, which dependency matters depends on what the evid
 model chooses its next query. Both are bounded, read-only and validated against the evidence they
 were given.
 
+## Production considerations
+
+Fireline is built *toward* production — the hard correctness problems are solved and tested — but it
+has only ever run on a laptop and in CI. Before a real team relied on it for paging:
+
+* **Secrets** — move `JWT_SECRET`, SMTP, webhook and Anthropic keys from environment variables into a
+  secrets manager (Vault / AWS Secrets Manager) with rotation; the app already refuses a weak
+  `JWT_SECRET`, but nothing rotates it.
+* **High availability** — the API and web are stateless and already scale horizontally; PostgreSQL
+  needs a managed primary with a synchronous standby and automatic failover, Redis needs Sentinel or a
+  managed cluster (a Redis outage delays pages but loses nothing — see [failure handling](docs/failure-handling.md)).
+  Workers should run as at least two replicas across zones.
+* **Paging must not depend on itself** — a platform that pages people can't be monitored only by
+  itself: an external heartbeat ("dead man's switch") on the worker and the sweeper, and a second
+  delivery channel (SMS / push) for SEV1s, since email alone is not an acceptable page.
+* **Backups and recovery** — point-in-time recovery for PostgreSQL (it is the single source of truth;
+  everything in Redis can be rebuilt from it), tested restores, and a documented RPO/RTO.
+* **Identity** — SSO (OIDC/SAML), MFA and server-side session revocation; today sessions are JWT
+  cookies that stay valid until they expire (listed in the roadmap and the threat model).
+* **Observability** — ship the structured logs and the ingestion metrics already exposed to a central
+  stack (OpenTelemetry → Prometheus/Grafana or similar) with SLOs on ingest latency and time-to-page.
+* **Privacy and AI** — a data-processing agreement for the model provider, per-organization opt-in for
+  AI features, and retention limits on alert payloads, logs and AI requests (redaction already runs
+  before anything leaves).
+
+### What would change at 100× scale
+
+At ~34,000 alerts/s the bottleneck is one PostgreSQL transaction per alert. I'd move to batching
+ingestion behind a durable log (Kafka or Redis Streams) so the API only appends and returns `202`,
+consumers deduplicating per dedup key in batches; partition the alerts and timeline tables by time and
+archive old incidents; put PgBouncer in front of PostgreSQL; and shard the SSE fan-out by organization.
+The deduplication rule itself — one open incident per key, enforced by a unique index — would stay.
+
+## Scope and honest limitations
+
+* **Simulated traffic.** Every alert, deploy and log line in the demos comes from the bundled simulator
+  and SDK, not from real monitoring systems; integrations with Prometheus Alertmanager, Datadog etc. are
+  done through the generic alert API, not native connectors.
+* **Notification channels.** Email (via Mailpit locally) and signed webhooks only; no SMS, push or chat
+  integrations yet.
+* **Benchmarks** are from one API process on a laptop; horizontal scaling follows from the design but
+  is not measured.
+* **AI features** are evaluated by hand on the simulated incidents; there is no eval set yet (first
+  item on the roadmap).
+
 ## Roadmap
 
 - An eval set for the drafter and investigator (resolved incidents with known root causes: is the
@@ -567,3 +613,7 @@ were given.
 - On-call schedules (rotations) as escalation targets; SMS / push / Slack channels and preferences
 - Server-side session revocation, SSO and MFA; scoped API keys (trigger-only vs. resolve)
 - A customer-facing status page driven by service status
+
+## Contributing and license
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) and the [changelog](CHANGELOG.md). [MIT](LICENSE) © 2026 kgiannopoulou
