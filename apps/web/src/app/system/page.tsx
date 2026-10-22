@@ -201,9 +201,9 @@ function IngestionCard({ data }: { data: Ingestion }) {
     ? [
         ["Alerts (5 min)", String(data.count)],
         ["Throughput", `${data.perSecond}/s`],
-        ["p50", data.latencyMs ? `${data.latencyMs.p50} ms` : "–"],
-        ["p95", data.latencyMs ? `${data.latencyMs.p95} ms` : "–"],
-        ["p99", data.latencyMs ? `${data.latencyMs.p99} ms` : "–"],
+        ["p50", data.latencyMs ? `${data.latencyMs.p50} ms` : "â€“"],
+        ["p95", data.latencyMs ? `${data.latencyMs.p95} ms` : "â€“"],
+        ["p99", data.latencyMs ? `${data.latencyMs.p99} ms` : "â€“"],
         ["5xx", String(data.errors)],
       ]
     : [];
@@ -230,7 +230,7 @@ function IngestionCard({ data }: { data: Ingestion }) {
               {Object.entries(data.decisions)
                 .sort((a, b) => b[1] - a[1])
                 .map(([decision, n]) => `${decision} ${n}`)
-                .join(" · ")}
+                .join(" Â· ")}
             </p>
           )}
         </>
